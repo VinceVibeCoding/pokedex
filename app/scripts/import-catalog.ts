@@ -2,8 +2,9 @@
 // Fills the `cards` table so name search works for every card — prices come
 // separately from the ingestion adapters. Idempotent: re-running updates rows.
 //
-//   npm run catalog:import                 # every English card (~20k, a few minutes)
-//   npm run catalog:import -- --set sv3pt5 # one set (ids: https://api.pokemontcg.io/v2/sets)
+//   npm run catalog:import                       # every English card (~20k, a few minutes)
+//   npm run catalog:import -- --set sv3pt5       # one set (ids: https://api.pokemontcg.io/v2/sets)
+//   npm run catalog:import -- --start-page 25    # resume a full run that died partway (page * 250 ≈ cards so far)
 //
 // Optional: POKEMONTCG_API_KEY in .env raises the rate limit (free key at pokemontcg.io).
 
@@ -85,13 +86,18 @@ function toRow(c: ApiCard) {
 async function main() {
   const setFlag = process.argv.indexOf("--set");
   const setId = setFlag >= 0 ? process.argv[setFlag + 1] : null;
+  const startFlag = process.argv.indexOf("--start-page");
+  // The free pokemontcg.io tier can go down for sustained stretches mid-run; ordering
+  // is deterministic (set.releaseDate,number), so a failed run can resume here instead
+  // of re-fetching every already-imported page from 1.
+  const startPage = startFlag >= 0 ? Number(process.argv[startFlag + 1]) : 1;
 
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
-  let imported = 0;
+  let imported = (startPage - 1) * PAGE_SIZE;
   let total = Infinity;
 
   try {
-    for (let page = 1; (page - 1) * PAGE_SIZE < total; page++) {
+    for (let page = startPage; (page - 1) * PAGE_SIZE < total; page++) {
       const result = await fetchPage(page, setId);
       total = result.totalCount;
       // Static metadata only — never touch pullRate/printVariant a human may have set.
