@@ -27,10 +27,22 @@ npx prisma generate   # npm's install-script sandboxing can skip this on `npm in
 ```bash
 npx prisma migrate deploy
 npm run db:seed             # 4 fixture cards with realistic comp data (Charizard, Pikachu, Blastoise, Miraidon ex)
-npm run catalog:import      # full card catalog from pokemontcg.io (~20k cards, a few minutes)
+npm run catalog:import      # full card catalog from pokemontcg.io (~20k English cards, a few minutes)
 # or just one set, e.g. the 30th Celebration set:
 npm run catalog:import -- --set me55
+# pokemontcg.io's free tier throws sustained 500/502 runs — resume a failed run instead of restarting:
+npm run catalog:import -- --start-page 25
+
+# TCGdex fills what pokemontcg.io misses (130k+ cards across 12 languages —
+# Japanese-exclusive promos, Gold Star variants, etc). Additive only: never
+# touches a card ID that already exists, only inserts new ones.
+npm run catalog:import-tcgdex -- --lang ja   # ~12.8k Japanese cards
+npm run catalog:import-tcgdex -- --lang en   # fills English gaps (~3k more than pokemontcg.io has)
 ```
+
+pokemontcg.io itself is being shut down **March 1, 2027** (folded into a paid
+successor, Scrydex) — TCGdex is the free path forward if/when this needs to
+become the primary catalog source.
 
 ### 4. Configure API keys (optional but needed for live prices / photo search)
 
@@ -89,6 +101,32 @@ cd app
 docker compose up -d   # postgres + redis
 npm run dev            # if not already running
 ```
+
+## Deployment
+
+Live on Vercel (Hobby, free tier) at https://app-nine-phi-aig9hyxxam.vercel.app,
+with Neon (Postgres, free tier) and Upstash (Redis, free tier) as Vercel
+Marketplace integrations — both set `DATABASE_URL`/`REDIS_URL` automatically,
+no code changes needed versus the local docker-compose setup. GitHub pushes to
+`main` auto-deploy (Vercel's GitHub App is installed on the repo, which must
+stay **public** — Hobby's private-repo collaboration restriction blocks
+deploys otherwise).
+
+A price refresh runs daily via Vercel Cron (`vercel.json` → `/api/cron/ingest`,
+00:05 UTC, guarded by `CRON_SECRET`) — see "How prices actually update" above
+for what that job does.
+
+**`vercel-build` must run `prisma generate` explicitly** (`package.json`) —
+`postinstall` alone isn't reliable: Vercel can restore a cached `node_modules`
+from a prior deploy, which makes `npm install` skip lifecycle scripts entirely
+(prints "up to date", never runs `postinstall`), breaking the build with
+`Module not found: '../generated/prisma/client'`. Putting `prisma generate`
+directly in `vercel-build` sidesteps the caching behavior since it's not
+contingent on the install step running.
+
+To deploy by hand: `npx vercel deploy --prod` (needs `npx vercel login` once).
+Production env vars (API keys, `DATABASE_URL`, `CRON_SECRET`, etc.) live only
+in Vercel's dashboard — pull them locally with `npx vercel env pull --environment=production .env.production.local` when you need to run a script (like a catalog import) against the real database.
 
 ## Secrets
 
