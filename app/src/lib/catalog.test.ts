@@ -32,6 +32,18 @@ describe("buildSearchText", () => {
     expect(text).toBe("pikachu 30th celebration me55 34 34/128 034 034/128 me55-34");
   });
 
+  it("indexes rarity, and aliases 'Rare Holo Star' to the collector term 'gold star'", () => {
+    const text = buildSearchText({
+      id: "hp-104",
+      name: "Pikachu ★",
+      setName: "Holon Phantoms",
+      setCode: "hp",
+      number: "104",
+      rarity: "Rare Holo Star",
+    });
+    expect(text).toBe("pikachu ★ holon phantoms hp 104 rare holo star gold star hp-104");
+  });
+
   it("skips missing parts", () => {
     expect(
       buildSearchText({ id: "base1-4", name: "Charizard", setName: "Base Set", setCode: "base1", number: null }),

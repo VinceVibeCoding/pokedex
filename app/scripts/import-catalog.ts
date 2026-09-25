@@ -78,6 +78,7 @@ function toRow(c: ApiCard) {
       setCode: c.set.id,
       number: c.number,
       printedTotal: c.set.printedTotal,
+      rarity: c.rarity ?? "Unknown",
     }),
   };
   return { id: c.id, data };
