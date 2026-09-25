@@ -1,0 +1,74 @@
+# Project 01 — Pokémon Card Price Intelligence Engine
+Build plan derived from CLAUDE.md. Check off each step as completed.
+North star: sub-second lookup of card ID + grade → pricing, stability, grade comparison, buy score.
+
+## Phase 0 — Project Scaffold
+- [x] Initialize Next.js (App Router) + TypeScript (strict, no `any`) + Tailwind CSS — Next.js 16.3.5 in `app/`, Node v24 via nvm
+- [x] Set up PostgreSQL + Prisma (`npx prisma migrate dev` workflow) — Prisma 7.10.0, docker-compose.yml with Postgres 16 + Redis 7, containers running
+- [x] Set up caching layer (Redis container running; app integration keyed by card ID pending) — `src/serving/cache.ts`, 5min TTL, degrades to DB if Redis is down
+- [x] Create shared domain types module: `Card`, `GradeTier` (`raw`, `psa8`, `psa9`, `psa10`), `Comp`, `MarketSignals`, `BuyScore`, `GradePremiumAnalysis` — `app/src/types/domain.ts`
+- [x] Verify commands work: `npm install`, `npm run dev`, `npm run build`, `npm test` — build ✓, typecheck ✓, prisma validate ✓ (note: `npm test` not wired yet — no test runner installed)
+
+## Phase 1 — Data Model (schema for append-only comps + rollups)
+- [x] Prisma model: `Card` (card ID, set, release date, type/rarity, pull rate, artist, print variant)
+- [x] Prisma model: `Comp` (card ref, price, date, condition, grade tier, marketplace, source: TCGplayer | Collectr | 130point) — append-only, grade is part of identity; dedupe via `@@unique([source, sourceUrl])`
+- [x] Prisma models: pre-aggregated rollup tables per card + grade tier (daily / weekly / monthly) — `CompRollup`
+- [x] Migration + seed script with realistic fixture comps — migration `init` applied; `npm run db:seed` (idempotent) seeds 4 cards / 87 comps covering all edge cases: healthy liquid card, single-sale card, stale market (200d), zero-comps card, PSA 10 outlier
+
+## Phase 2 — Analysis Module (pure functions, `analysis/`, unit-tested)
+- [x] Market signals: sales count, most recent sale, velocity per day/week/month, price trend, volatility — per grade tier — `src/analysis/signals.ts`
+- [x] Market Stability Index: composite of volume + recency + volatility (formula documented in code) — `src/analysis/stability.ts` (weights 40/30/30)
+- [x] Buy Score: transparent heuristics first (trend slope, velocity, deviation from moving average) — explainable in UI — `src/analysis/buyScore.ts` (starts at 50, reasons[] per adjustment)
+- [x] Grade Premium Analysis: price-to-value across raw / PSA 8 / 9 / 10 (incl. grading cost) → recommended tier — `src/analysis/gradePremium.ts`
+- [x] Suggested price at different markup levels — `src/analysis/pricing.ts` (30d median base, markups 0/5/10/15/20%)
+- [x] Unit tests with edge cases: 0 sales, 1 sale, huge outlier sale, stale last sale, sparse grade tiers — Vitest, 19/19 passing
+
+## Phase 3 — Ingestion Plane (slow, async — never in request path)
+- [x] Internal source-adapter interface (retries, timeouts, stored fallbacks) — `src/ingestion/adapters/types.ts` (health-check gate + fetchWithRetry)
+- [~] Adapter: TCGplayer — DEFERRED (decision 2026-09-21): eBay covers most of the market; TCGplayer adds market-price benchmark later. Setup notes: `.obsidian-vault/setup/04-tcgplayer-later.md`
+- [x] RESOLVED (2026-09-25): eBay Finding API is dead → free tiers of PokeTrace (raw) + PokemonPriceTracker (PSA 8/9/10), daily summaries — see decisions/2026-09-25-data-source.md
+- [x] `daily_prices` + `tracked_cards` + `source_quotas` tables; weighted analysis (`analysis/stats.ts`); one source per tier (`serving/series.ts`)
+- [x] Clients: `src/ingestion/sources/` (poketrace, pokemonpricetracker, rate-limited http, daily budgets); refresh flow `src/ingestion/refresh.ts`
+- [x] Auto-fetch on card view (`POST /api/cards/[id]/refresh` + after()); `npm run ingest` refreshes tracked cards within budget
+- [x] Verified end-to-end against a fake API server (plan refusal, pagination, daily 429, unmatched card); 81 tests
+- [ ] Verify with real API keys (card_number format, free history period)
+- [ ] Daily cron for `npm run ingest` (optional — viewed cards refresh themselves)
+- [~] Adapter: Collectr — eBay-backed (decision 2026-09-21); needs `EBAY_APP_ID` + `fetchComps()` implementation. Setup: `.obsidian-vault/setup/01-03`
+- [~] Adapter: 130point — eBay-backed (decision 2026-09-21); needs `EBAY_APP_ID` + `fetchComps()` implementation. Setup: `.obsidian-vault/setup/01-03`
+- [x] Normalization pipeline: grade detection from listings, dedupe, source recorded per comp — `src/ingestion/pipeline.ts` + `gradeDetect.ts` (12 tests)
+- [x] Scheduled jobs (cron/queue): fetch comps → store raw → recompute rollups + signals per grade tier — `npm run ingest` (`scripts/ingest.ts`); cron scheduling itself still TODO
+- [x] Upstream outage test: adapters fail gracefully without breaking lookups — verified: stubs report skipped_unhealthy, mock still ingests; re-run is idempotent (0 dupes)
+- [x] MockAdapter for local dev — `src/ingestion/adapters/mock.ts`
+
+## Phase 4 — Serving Plane (fast, sync — reads precomputed snapshots only)
+- [x] API endpoint: card ID + grade → full snapshot (all grade tiers in ONE self-contained response) — `GET /api/cards/[cardId]?grade=`
+- [x] No live external API calls in the request path — reads Card + 90d comps from Postgres only
+- [x] Response caching by card ID, TTL keyed to ingestion freshness — Redis, 5min TTL, verified via KEYS
+- [x] "Insufficient data" as a valid response state per grade tier (not an error) — verified: psa8 null on sv01-198 while other tiers populate
+- [x] Verified live: 404 unknown card, 400 invalid grade, 200 valid grade; ~10ms warm lookups
+
+## Phase 5 — Web Interface (deliverable 1) — redesigned 2026-09-25 (see decisions/2026-09-25-lookup-ux.md)
+- [x] Card catalog: `npm run catalog:import [-- --set <id>]` from pokemontcg.io (names, numbers, images); `cards.searchText` + pg_trgm GIN index
+- [x] Name search: `GET /api/search?q=` (~10ms) + search-as-you-type box (↑↓ Enter, "/" to focus, prefetch highlighted card)
+- [x] Fix: `?grade=` was validated but ignored — buy score now computed per tier; response carries `selectedTier`
+- [x] Pricing reframed: fair price (30d median, 90d fallback, typical p25–p75) + max buy price for target ROI after eBay fees/shipping
+- [x] Lookup UI `/card/[id]?grade=`: grade buttons double as grade comparison (price + × raw), instant grade switching (R/8/9/0 keys), verdict, stats, 90d sales chart, recent sales, "why this verdict"
+- [x] Free-form grade fallback ("CGC 9.5" → PSA 9 with note) — `src/lib/grade.ts`
+- [x] Per-tier "insufficient data" UI; error boundary only for true failures
+- [x] Fix: Redis-down made every lookup hang (connect() never settled) — cache is now non-blocking
+- [x] Typecheck + build clean; 52 tests; lookups ~11ms with no Redis
+- [ ] Grade EV: expected value of raw + grading using real gem rates (needs PSA pop data from the price source)
+- [x] Trend now uses medians and needs 2+ sales in each 30-day window
+
+## Phase 6 — Chrome Extension (deliverable 2)
+- [ ] Thin client consuming the same API (no duplicated logic)
+- [ ] Card ID + grade input, renders the same snapshot
+
+## Phase 7 — iPhone App (deliverable 3)
+- [ ] Thin client consuming the same API
+- [ ] Same lookup UX contract as web
+
+## Later / Evaluation
+- [ ] Consider TimescaleDB if comp volume justifies it (do NOT add preemptively)
+- [ ] Source weighting/reconciliation across TCGplayer / Collectr / 130point
+- [ ] ML-based trend prediction once heuristic Buy Score is validated

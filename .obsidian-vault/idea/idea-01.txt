@@ -1,0 +1,13 @@
+The idea for this project is to create a price comparison engine for pokemon cards. 
+
+It scans all comps for a card ID, and tells me the price I should pay with different levels of markup - and the market stability index - based on the number of sales, the most recent sale, how many sales per day -week - month, and all the other information about the card : Date of release, type of card, set it released in, the pull rate for it, etc. 
+
+The goal is to be able to have an interface, put a card ID and very quickly it retrieves the info about it and shares it in the same UI. 
+
+I need something lighting fast, so that I can use it on my computer (maybe via a chrome plug-in) - and after that via a Iphone App. 
+
+I want to use very advanced Data science algorithm to identify if the card is a good buy - if it should trend higher - like we would do with a stock. 
+
+I also want to see if its more worth it to buy - non graded, PSA 8, 9 or 10 only. 
+
+The user will also be able from the UI to fill if the card is graded , and what grade - either manually or via buttons for : 10,9 ,8. 

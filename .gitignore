@@ -1,0 +1,8 @@
+# Secrets — never commit these.
+api_keys.txt
+*.env
+*.env.*
+!*.env.example
+
+# OS cruft
+.DS_Store

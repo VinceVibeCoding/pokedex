@@ -1,0 +1,177 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Grade is part of a comp's identity — modeled as data (enum), never as separate tables.
+enum GradeTier {
+  raw
+  psa8
+  psa9
+  psa10
+}
+
+// Authoritative comp data sources. One ingestion adapter per source.
+enum CompSource {
+  tcgplayer
+  collectr
+  one30point
+}
+
+/// Summary-only price sources (free API tiers): one aggregate per card/grade/day.
+enum DailySource {
+  ppt_ebay // PokemonPriceTracker — eBay graded sales (PSA 8/9/10)
+  poketrace_ebay // PokeTrace — eBay raw sales
+  poketrace_tcgplayer // PokeTrace — TCGplayer raw sales
+}
+
+enum RollupWindow {
+  daily
+  weekly
+  monthly
+}
+
+/// Static card metadata — cache forever. One row per card ID.
+model Card {
+  id            String   @id // canonical card ID, the lookup key (e.g. "base1-4")
+  name          String
+  setName       String
+  setCode       String
+  releaseDate   DateTime @db.Date
+  cardType      String // "Pokemon" | "Trainer" | "Energy"
+  rarity        String
+  pullRate      Float? // e.g. 0.005 = 1 in 200 packs
+  artist        String?
+  printVariant  String? // "holo" | "reverse holo" | "1st edition" | null
+  number        String? // collector number as printed, e.g. "199" (set total lives on the set)
+  imageUrl      String? // small card image (catalog import, pokemontcg.io)
+  imageUrlLarge String?
+  /// Lowercased "name set setCode number id" — the name-search haystack.
+  /// Written by buildSearchText() on every catalog write; trigram-indexed
+  /// (pg_trgm extension is created in the migration SQL).
+  searchText    String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  comps       Comp[]
+  rollups     CompRollup[]
+  dailyPrices DailyPrice[]
+  tracking    TrackedCard?
+
+  @@index([searchText(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("cards")
+}
+
+/// A completed sale of a specific card at a specific grade.
+/// Append-only: never update or delete — corrections are new rows.
+model Comp {
+  id         String     @id @default(cuid())
+  cardId     String
+  gradeTier  GradeTier
+  priceCents Int // integer cents — never float money
+  currency   String     @default("USD") // ISO 4217
+  soldAt     DateTime
+  condition  String? // raw listings only (e.g. "NM", "LP")
+  source     CompSource
+  sourceUrl  String?
+  ingestedAt DateTime   @default(now())
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  // Ingestion dedupe: same source listing must not be ingested twice.
+  @@unique([source, sourceUrl])
+  // Serving-plane reads: "all comps for card+tier, newest first".
+  @@index([cardId, gradeTier, soldAt(sort: Desc)])
+  @@map("comps")
+}
+
+/// Pre-aggregated market signals per card + grade tier + window.
+/// Recomputed by the ingestion plane; the serving plane reads ONLY this
+/// (and Card) — never raw comps — so lookups stay sub-second.
+model CompRollup {
+  id                 String       @id @default(cuid())
+  cardId             String
+  gradeTier          GradeTier
+  window             RollupWindow
+  windowStart        DateTime     @db.Date
+  salesCount         Int
+  minPriceCents      Int?
+  maxPriceCents      Int?
+  avgPriceCents      Int?
+  medianPriceCents   Int?
+  lastSaleAt         DateTime?
+  lastSalePriceCents Int?
+  computedAt         DateTime     @default(now())
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([cardId, gradeTier, window, windowStart])
+  @@index([cardId, gradeTier, window, windowStart(sort: Desc)])
+  @@map("comp_rollups")
+}
+
+/// Daily aggregate sales for one card + grade tier + source, from summary-only
+/// sources. Unlike Comp this is upserted: a source may revise a day's numbers.
+/// Never mix sources for one tier in a calculation — they overlap (same eBay sales).
+model DailyPrice {
+  id               String      @id @default(cuid())
+  cardId           String
+  gradeTier        GradeTier
+  source           DailySource
+  date             DateTime    @db.Date
+  avgPriceCents    Int
+  medianPriceCents Int?
+  lowPriceCents    Int?
+  highPriceCents   Int?
+  saleCount        Int // sales that day; 0 = price quoted but nothing sold
+  approxSaleCount  Boolean     @default(false)
+  fetchedAt        DateTime    @default(now())
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([cardId, gradeTier, source, date])
+  @@index([cardId, date(sort: Desc)])
+  @@map("daily_prices")
+}
+
+/// Cards we actively fetch prices for. Free API budgets can't cover the whole
+/// catalog, so a card is tracked the first time someone looks it up.
+model TrackedCard {
+  cardId          String    @id
+  trackedAt       DateTime  @default(now())
+  tcgplayerId     String? // PokemonPriceTracker's key; learned from PokeTrace refs
+  poketraceId     String? // PokeTrace card UUID
+  mappedAt        DateTime?
+  mappingError    String?
+  fetchStartedAt  DateTime? // guards against two fetches of the same card at once
+  lastAttemptAt   DateTime? // throttles page-view refreshes after a failure
+  lastRefreshedAt DateTime?
+  lastError       String?
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([lastRefreshedAt])
+  @@map("tracked_cards")
+}
+
+/// Per-source daily API budget. Lets every process (web + cron) stop before
+/// hitting a daily limit instead of collecting 429s (repeated 429s can get a key blocked).
+model SourceQuota {
+  source         String    @id // "pokemonpricetracker" | "poketrace"
+  day            DateTime  @db.Date // UTC day the counters belong to
+  used           Int       @default(0) // credits/requests we spent today
+  remaining      Int? // as reported by the source's headers, when it reports it
+  exhaustedUntil DateTime?
+  updatedAt      DateTime  @updatedAt
+
+  @@map("source_quotas")
+}
