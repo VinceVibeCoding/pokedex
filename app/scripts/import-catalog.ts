@@ -93,10 +93,13 @@ async function main() {
       const result = await fetchPage(page, setId);
       total = result.totalCount;
       // Static metadata only — never touch pullRate/printVariant a human may have set.
+      // Generous timeout: a page of PAGE_SIZE upserts over a high-latency connection
+      // (e.g. local machine → Neon) can comfortably exceed Prisma's 5s default.
       await prisma.$transaction(
         result.data.map(toRow).map(({ id, data }) =>
           prisma.card.upsert({ where: { id }, update: data, create: { id, ...data } }),
         ),
+        { timeout: 30_000 },
       );
       imported += result.data.length;
       console.log(`  ${imported}/${total} cards`);
