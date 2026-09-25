@@ -30,17 +30,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Generate Prisma client
-        run: npx prisma generate
-
-      - name: Type-check
-        run: npx tsc --noEmit
-
       - name: Lint
         run: npm run lint
 
       - name: Test
         run: npm run test
 
+      # Also does the full type-check as an integrated step (visible as "Running
+      # TypeScript" in the build log) — Next.js generates ambient types (PageProps,
+      # LayoutProps, etc.) into .next/types during this step, so a standalone
+      # `tsc --noEmit` run beforehand fails on a fresh checkout with "Cannot find
+      # name 'PageProps'" even though it works locally once .next/ already exists.
       - name: Build (same command Vercel runs in production)
         run: npx prisma generate && npx next build

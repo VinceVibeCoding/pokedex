@@ -6,3 +6,4 @@ api_keys.txt
 
 # OS cruft
 .DS_Store
+.vercel
