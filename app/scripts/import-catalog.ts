@@ -48,8 +48,10 @@ async function fetchPage(page: number, setId: string | null, attempt = 1): Promi
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as ApiPage;
   } catch (err) {
-    if (attempt >= 4) throw err;
-    const waitMs = 2000 * attempt;
+    // The free pokemontcg.io tier throws sustained runs of 500/502s under load —
+    // a handful of quick retries isn't enough to ride those out.
+    if (attempt >= 8) throw err;
+    const waitMs = Math.min(2000 * attempt, 20_000);
     console.warn(`  page ${page} failed (${(err as Error).message}), retrying in ${waitMs / 1000}s`);
     await new Promise((r) => setTimeout(r, waitMs));
     return fetchPage(page, setId, attempt + 1);
