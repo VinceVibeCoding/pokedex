@@ -10,6 +10,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "ingest": "tsx scripts/ingest.ts",
     "catalog:import": "tsx scripts/import-catalog.ts",
+    "catalog:import-tcgdex": "tsx scripts/import-tcgdex.ts",
     "test": "vitest run"
   },
   "dependencies": {
