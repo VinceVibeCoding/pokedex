@@ -1,0 +1,46 @@
+name: CI
+
+# Mirrors what Vercel actually runs in production (prisma generate + next build),
+# so a broken build shows up as a red X within ~1 minute of pushing instead of
+# only being discovered by checking the live site.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    env:
+      DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
+      REDIS_URL: "redis://localhost:6379"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Build (same command Vercel runs in production)
+        run: npx prisma generate && npx next build

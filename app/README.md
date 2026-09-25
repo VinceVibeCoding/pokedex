@@ -116,15 +116,45 @@ A price refresh runs daily via Vercel Cron (`vercel.json` → `/api/cron/ingest`
 00:05 UTC, guarded by `CRON_SECRET`) — see "How prices actually update" above
 for what that job does.
 
-**`vercel-build` must run `prisma generate` explicitly** (`package.json`) —
-`postinstall` alone isn't reliable: Vercel can restore a cached `node_modules`
-from a prior deploy, which makes `npm install` skip lifecycle scripts entirely
-(prints "up to date", never runs `postinstall`), breaking the build with
-`Module not found: '../generated/prisma/client'`. Putting `prisma generate`
-directly in `vercel-build` sidesteps the caching behavior since it's not
-contingent on the install step running.
+### Build command: three layers, and why all three exist
 
-To deploy by hand: `npx vercel deploy --prod` (needs `npx vercel login` once).
+The production build needs `prisma generate` to run before `next build` (the
+generated client lives at `src/generated/prisma`, correctly gitignored, so it
+must be regenerated on every build). Getting this reliable on Vercel took three
+layered fixes, each defeating a different way Vercel's build caching silently
+skipped it — keep all three, removing any one re-opens the hole it closed:
+
+1. **`postinstall: "prisma generate"`** (`package.json`) — runs on a normal
+   `npm install`. Not sufficient alone: when Vercel restores a cached
+   `node_modules` from a prior deploy, `npm install` sees the tree as already
+   "up to date" and skips lifecycle scripts entirely, so `postinstall` never
+   fires.
+2. **`vercel-build: "prisma generate && next build"`** (`package.json`) — runs
+   regardless of the install step, since it's a separate explicit script. Also
+   not sufficient alone in practice: Vercel appeared to cache its *detected*
+   build command from framework auto-detection and kept reusing a stale
+   `next build`-only value on cache-restored builds, ignoring that the
+   `vercel-build` script itself had changed.
+3. **Project-level `buildCommand` set via the Vercel API** (`PATCH
+   /v9/projects/<id>`, not just `vercel.json` — the repo-level `vercel.json`
+   `buildCommand` field didn't reliably override the cached detection either)
+   — this is the one that actually stuck under cache-restored builds. If you
+   ever need to change the build command, update it here, not only in
+   `package.json`/`vercel.json`:
+   ```bash
+   npx vercel api "/v9/projects/<projectId>?teamId=<teamId>" -X PATCH \
+     -F 'buildCommand=prisma generate && next build'
+   ```
+
+**CI safety net:** `.github/workflows/ci.yml` runs typecheck/lint/test and the
+exact same build command on every push, so a break shows up as a red X on the
+commit within ~1 minute — independent of whatever Vercel's cache is doing.
+It does not block Vercel's own auto-deploy (that would need a Vercel API
+token wired into the workflow to gate promotion, deliberately skipped to
+avoid another paid/keyed dependency) — it's a fast detection layer, not a gate.
+
+To deploy by hand: `npx vercel deploy --prod` (needs `npx vercel login` once;
+add `--force` to bypass the build cache entirely if a deploy ever looks stale).
 Production env vars (API keys, `DATABASE_URL`, `CRON_SECRET`, etc.) live only
 in Vercel's dashboard — pull them locally with `npx vercel env pull --environment=production .env.production.local` when you need to run a script (like a catalog import) against the real database.
 
