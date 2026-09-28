@@ -333,7 +333,7 @@ function TierDetails({
   );
 }
 
-const SOURCE_LABELS = { tcgplayer: "TCGplayer", collectr: "Collectr", one30point: "eBay" } as const;
+const SOURCE_LABELS = { tcgplayer: "TCGplayer", collectr: "Collectr", one30point: "eBay", soldcomps_ebay: "eBay" } as const;
 
 function RecentSalesTable({ sales }: { sales: RecentSale[] }) {
   return (

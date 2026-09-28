@@ -56,9 +56,9 @@ export async function getJson<T>(req: ApiRequest): Promise<T> {
 
     if (res.status === 429) {
       const retryAfter = Number(res.headers.get("retry-after") ?? "0");
-      const body = (await res.json().catch(() => ({}))) as { limitType?: string };
+      const body = (await res.json().catch(() => ({}))) as { limitType?: string; code?: string };
       // Daily limit (explicit, or a Retry-After too long to be a burst limit): stop for today.
-      if (body.limitType === "daily" || retryAfter > 120) {
+      if (body.limitType === "daily" || body.code === "quota_exceeded" || retryAfter > 120) {
         await markExhausted(req.source, retryAfter > 120 ? new Date(Date.now() + retryAfter * 1000) : nextUtcMidnight());
         throw new ApiError(req.source, 429, "daily limit reached — stopping until reset");
       }

@@ -4,12 +4,14 @@
 
 import { getPrisma } from "../../lib/prisma";
 
-export type QuotaSource = "pokemonpricetracker" | "poketrace";
+export type QuotaSource = "pokemonpricetracker" | "poketrace" | "soldcomps";
 
 /** Free-tier daily allowances. Override with env if you upgrade a plan. */
 export const DAILY_LIMITS: Record<QuotaSource, number> = {
   pokemonpricetracker: Number(process.env.PPT_DAILY_CREDITS ?? 100),
   poketrace: Number(process.env.POKETRACE_DAILY_REQUESTS ?? 250),
+  // SoldComps bills monthly (free = 100/mo); ~3/day paces that. Raise with the plan: monthly quota / 30.
+  soldcomps: Number(process.env.SOLDCOMPS_DAILY_REQUESTS ?? 3),
 };
 
 export class QuotaExhaustedError extends Error {

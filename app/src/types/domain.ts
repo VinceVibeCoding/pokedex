@@ -6,7 +6,7 @@
 export type GradeTier = "raw" | "psa8" | "psa9" | "psa10";
 
 /** Authoritative comp data sources. Recorded on every comp for weighting/reconciliation. */
-export type CompSource = "tcgplayer" | "collectr" | "one30point";
+export type CompSource = "tcgplayer" | "collectr" | "one30point" | "soldcomps_ebay";
 
 /** Static card metadata — cache forever. */
 export interface Card {

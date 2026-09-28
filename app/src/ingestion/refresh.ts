@@ -11,12 +11,15 @@ import { ApiError } from "./sources/http";
 import { QuotaExhaustedError } from "./sources/quota";
 import { fetchRawHistory, findPokeTraceCard, isPokeTraceConfigured, MATCHER_VERSION_TAG, printedNumberOf } from "./sources/poketrace";
 import { fetchGradedHistory, isPptConfigured } from "./sources/pokemonpricetracker";
+import { fetchEbaySales, isSoldCompsConfigured, PSA_TIERS } from "./sources/soldcomps";
 import type { DailyPoint } from "./sources/types";
 
 /** A fetch older than this is assumed dead (crashed process) and may be retaken. */
 export const FETCH_LOCK_MS = 2 * 60 * 1000;
 /** Don't retry a failed card match more often than this — each try costs budget. */
 const MAPPING_RETRY_MS = 7 * 24 * 60 * 60 * 1000;
+/** Individual eBay sales change slowly and cost a request per PSA tier — refetch weekly. */
+const COMPS_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type SourceOutcome =
   | { status: "ok"; points: number }
@@ -30,6 +33,7 @@ export interface RefreshResult {
   mapping: SourceOutcome;
   raw: SourceOutcome;
   graded: SourceOutcome;
+  comps: SourceOutcome; // individual eBay sales (SoldComps)
 }
 
 export function sourcesConfigured(): boolean {
@@ -144,6 +148,7 @@ export async function refreshCard(
     mapping: skipped("not needed"),
     raw: skipped("not run"),
     graded: skipped("not run"),
+    comps: skipped("not run"),
   };
 
   const card = await prisma.card.findUnique({ where: { id: cardId } });
@@ -240,8 +245,41 @@ export async function refreshCard(
       }
     }
 
-    const anyOk = result.raw.status === "ok" || result.graded.status === "ok";
-    const problems = [result.mapping, result.raw, result.graded]
+    // 4. Individual eBay sales (SoldComps), PSA tiers only — one request per tier, at most weekly per card.
+    if (!isSoldCompsConfigured()) {
+      result.comps = skipped("SOLDCOMPS_API_KEY not set");
+    } else if (tracking.compsFetchedAt && now.getTime() - tracking.compsFetchedAt.getTime() < COMPS_REFRESH_MS) {
+      result.comps = skipped("fetched within the last week");
+    } else {
+      try {
+        const forSearch = {
+          name: card.name,
+          setName: card.setName,
+          number: card.number,
+          printedNumber: printedNumberOf(card.searchText, card.number),
+          printVariant: card.printVariant,
+        };
+        let saved = 0;
+        for (const tier of PSA_TIERS) {
+          const rows = await fetchEbaySales(forSearch, tier);
+          if (rows.length > 0) {
+            const created = await prisma.comp.createMany({
+              data: rows.map((r) => ({ cardId, gradeTier: r.gradeTier, priceCents: r.priceCents, soldAt: r.soldAt, source: "soldcomps_ebay" as const, sourceUrl: r.sourceUrl })),
+              skipDuplicates: true, // same listing seen on an earlier fetch
+            });
+            saved += created.count;
+          }
+        }
+        // Only stamp after all three tiers succeeded; a quota stop midway retries later.
+        await prisma.trackedCard.update({ where: { cardId }, data: { compsFetchedAt: now } });
+        result.comps = { status: "ok", points: saved };
+      } catch (err) {
+        result.comps = outcomeOf(err);
+      }
+    }
+
+    const anyOk = result.raw.status === "ok" || result.graded.status === "ok" || result.comps.status === "ok";
+    const problems = [result.mapping, result.raw, result.graded, result.comps]
       .map((o) => (o.status === "failed" ? o.error : o.status === "quota" ? "Daily free API limit reached" : null))
       .filter((m): m is string => m !== null);
 

@@ -25,6 +25,7 @@ enum CompSource {
   tcgplayer
   collectr
   one30point
+  soldcomps_ebay // SoldComps — individual eBay sold listings (PSA tiers)
 }
 
 /// Summary-only price sources (free API tiers): one aggregate per card/grade/day.
@@ -157,6 +158,7 @@ model TrackedCard {
   lastAttemptAt   DateTime? // throttles page-view refreshes after a failure
   lastRefreshedAt DateTime?
   lastError       String?
+  compsFetchedAt  DateTime? // last time individual eBay sales (SoldComps) were fetched; throttles to weekly
 
   card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
 
