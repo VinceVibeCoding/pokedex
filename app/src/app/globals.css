@@ -1,8 +1,26 @@
 @import "tailwindcss";
 
-/* Theme tokens — light first, dark selected (not auto-inverted). Status colors are
+/* Theme tokens — dark first (marketplace look), light when the OS asks for it. Status colors are
    fixed across themes and always paired with an icon + label, never color alone. */
 :root {
+  --bg: #0d0e12;
+  --surface: #16181e;
+  --surface-2: #1f222b;
+  --border: #2a2e39;
+  --text: #f4f5f7;
+  --text-2: #b6bac6;
+  --text-3: #7f8595;
+  --accent: #f5b301;
+  --accent-text: #111111;
+  --series-1: #f5b301;
+  --good: #22c55e;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #ef4444;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
   --bg: #f6f6f4;
   --surface: #fcfcfb;
   --surface-2: #efefec;
@@ -17,22 +35,9 @@
   --warning: #fab219;
   --serious: #ec835a;
   --critical: #d03b3b;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #111110;
-    --surface: #1a1a19;
-    --surface-2: #242423;
-    --border: #33332f;
-    --text: #ffffff;
-    --text-2: #c3c2b7;
-    --text-3: #8f8e86;
-    --accent: #3987e5;
-    --accent-text: #ffffff;
-    --series-1: #3987e5;
   }
 }
+
 
 @theme inline {
   --color-bg: var(--bg);
