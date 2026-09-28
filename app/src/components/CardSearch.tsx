@@ -5,6 +5,7 @@
 // card so picking it feels instant.
 
 import { useEffect, useId, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CardThumb } from "./CardThumb";
 import type { CardSearchResult, GradeTier } from "@/types/domain";
@@ -26,6 +27,7 @@ export function CardSearch({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CardSearchResult[]>([]);
+  const [total, setTotal] = useState(0);
   const [searchedFor, setSearchedFor] = useState("");
   const [active, setActive] = useState(0);
   const [open, setOpen] = useState(false);
@@ -55,8 +57,9 @@ export function CardSearch({
       try {
         const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: controller.signal });
         if (!res.ok) return;
-        const body = (await res.json()) as { results: CardSearchResult[] };
+        const body = (await res.json()) as { results: CardSearchResult[]; total?: number };
         setResults(body.results);
+        setTotal(body.total ?? body.results.length);
         setSearchedFor(q);
         setActive(0);
       } catch {
@@ -107,6 +110,7 @@ export function CardSearch({
         return;
       }
       setResults(data.results);
+      setTotal(data.results.length);
       setSearchedFor(data.query);
       setQuery(data.query);
       setActive(0);
@@ -127,7 +131,11 @@ export function CardSearch({
       setActive((i) => Math.max(i - 1, 0));
     } else if (e.key === "Enter") {
       const card = visible[active];
-      if (card) {
+      if (e.shiftKey && query.trim()) {
+        e.preventDefault();
+        setOpen(false);
+        router.push(`/search?q=${encodeURIComponent(query.trim())}`);
+      } else if (card) {
         e.preventDefault();
         go(card);
       }
@@ -242,6 +250,18 @@ export function CardSearch({
               </div>
             </li>
           ))}
+          {photoStatus === "idle" && visible.length > 0 && (
+            <li role="presentation">
+              <Link
+                href={`/search?q=${encodeURIComponent(query.trim())}`}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setOpen(false)}
+                className="block rounded-lg px-3 py-2 text-sm font-medium text-accent hover:bg-surface-2"
+              >
+                {total > visible.length ? `See all ${total.toLocaleString()} results →` : "View as full results page →"}
+              </Link>
+            </li>
+          )}
         </ul>
       )}
     </div>

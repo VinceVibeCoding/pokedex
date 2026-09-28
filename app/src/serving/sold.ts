@@ -5,6 +5,7 @@
 //   sources "best" → one row per card + grade + day, by SOURCE_PREFERENCE (home strip)
 
 import { getPrisma } from "../lib/prisma";
+import { searchCardIds } from "./search";
 import type { GradeTier } from "../types/domain";
 import type { DailySourceName } from "../ingestion/sources/types";
 
@@ -35,12 +36,14 @@ export interface SoldEntry {
 
 export type SoldSort = "recent" | "price";
 
-export async function getSoldHistory(opts: { grade?: GradeTier | null; sort?: SoldSort; limit?: number; sources?: "all" | "best"; source?: DailySourceName | null } = {}): Promise<SoldEntry[]> {
-  const { grade = null, sort = "recent", limit = SOLD_PAGE_SIZE, sources = "best", source = null } = opts;
+export async function getSoldHistory(opts: { grade?: GradeTier | null; sort?: SoldSort; limit?: number; sources?: "all" | "best"; source?: DailySourceName | null; q?: string } = {}): Promise<SoldEntry[]> {
+  const { grade = null, sort = "recent", limit = SOLD_PAGE_SIZE, sources = "best", source = null, q = "" } = opts;
+  const cardIds = q.trim() ? await searchCardIds(q) : null;
+  if (cardIds && cardIds.length === 0) return [];
   const since = new Date(Date.now() - LOOKBACK_DAYS * 86_400_000);
 
   const rows = await getPrisma().dailyPrice.findMany({
-    where: { date: { gte: since }, saleCount: { gt: 0 }, ...(grade ? { gradeTier: grade } : {}), ...(source ? { source } : {}) },
+    where: { date: { gte: since }, saleCount: { gt: 0 }, ...(grade ? { gradeTier: grade } : {}), ...(source ? { source } : {}), ...(cardIds ? { cardId: { in: cardIds } } : {}) },
     orderBy: { date: "desc" },
     select: {
       cardId: true,
