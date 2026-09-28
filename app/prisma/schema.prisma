@@ -68,6 +68,7 @@ model Card {
   dailyPrices    DailyPrice[]
   tracking       TrackedCard?
   watchlistItems WatchlistItem[]
+  priceSnapshots CardPriceSnapshot[]
 
   @@index([searchText(ops: raw("gin_trgm_ops"))], type: Gin)
   @@map("cards")
@@ -200,4 +201,38 @@ model SourceQuota {
   updatedAt      DateTime  @updatedAt
 
   @@map("source_quotas")
+}
+
+/// One row per card per day from the bulk catalog price feed (pokemontcg.io): TCGplayer market
+/// (USD, current only) and Cardmarket (EUR, with 1/7/30-day averages). This is what makes
+/// market-wide trends possible for the whole catalog — sold-listing data (daily_prices) only
+/// exists for tracked cards. Kept ~120 days; cards under ~$1 are not stored.
+model CardPriceSnapshot {
+  cardId         String
+  date           DateTime  @db.Date
+  tcgVariant     String? // which TCGplayer variant tcgMarketCents describes ("normal", "unlimited", …)
+  tcgMarketCents Int? // USD
+  tcgLowCents    Int? // USD
+  cmTrendCents   Int? // EUR
+  cmAvg1Cents    Int? // EUR
+  cmAvg7Cents    Int? // EUR
+  cmAvg30Cents   Int? // EUR
+  cmUpdatedAt    DateTime? @db.Date // Cardmarket data can be weeks stale — trends only use fresh rows
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@id([cardId, date])
+  @@index([date])
+  @@map("card_price_snapshots")
+}
+
+/// Resume point for the daily snapshot job, which can outlast one serverless invocation.
+model SnapshotCursor {
+  id        String   @id // "daily"
+  day       DateTime @db.Date // the UTC day the cursor belongs to
+  nextPage  Int      @default(1)
+  done      Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+
+  @@map("snapshot_cursor")
 }

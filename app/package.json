@@ -13,7 +13,8 @@
     "ingest": "tsx scripts/ingest.ts",
     "catalog:import": "tsx scripts/import-catalog.ts",
     "catalog:import-tcgdex": "tsx scripts/import-tcgdex.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "snapshot:prices": "tsx scripts/snapshot-prices.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
