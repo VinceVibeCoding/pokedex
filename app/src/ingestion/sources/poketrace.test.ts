@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeCardNumber, parseRawHistory, pickBestMatch, setNameScore, type PokeTraceCard } from "./poketrace";
+import { normalizeCardNumber, parseRawHistory, pickBestMatch, printedNumberOf, setNameScore, type PokeTraceCard } from "./poketrace";
 
 const card = (overrides: Partial<PokeTraceCard>): PokeTraceCard => ({
   id: "uuid-1",
@@ -84,5 +84,24 @@ describe("parseRawHistory", () => {
         { date: "2026-09-21", source: "ebay", avg: null, saleCount: 0 },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("Jungle Snorlax regression (PokeTrace names it Snorlax (27), number 27/64)", () => {
+  it("matches despite the parenthetical name and picks the unlimited print", () => {
+    const mk = (variant: string, cardNumber: string) =>
+      card({ name: "Snorlax (27)", cardNumber, variant, set: { slug: "jungle", name: "Jungle" } });
+    const result = pickBestMatch({ name: "Snorlax", setName: "Jungle", number: "27" }, [
+      card({ name: "Snorlax", cardNumber: "030/130", set: { slug: "base-set-2", name: "Base Set 2" } }),
+      mk("1st_Edition", "27/64"),
+      mk("Unlimited", "27/64"),
+    ]);
+    expect(result.ok && result.card.variant).toBe("Unlimited");
+  });
+
+  it("finds the printed number in searchText", () => {
+    expect(printedNumberOf("snorlax jungle base2 27 27/64 base2-27", "27")).toBe("27/64");
+    expect(printedNumberOf("snorlax jungle 11/64", "27")).toBeNull();
+    expect(printedNumberOf("x", null)).toBeNull();
   });
 });

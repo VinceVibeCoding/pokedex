@@ -91,6 +91,16 @@ const VARIANT_PREFERENCE: Record<string, number> = {
   "1st_Edition_Holofoil": 0,
 };
 
+/** Appended to every match failure; bump the version when the matcher changes so old failures retry. */
+export const MATCHER_VERSION_TAG = "[matcher v2]";
+
+/** The catalog stores printed numbers inside searchText ("27/64"); PokeTrace's card_number filter needs that form. */
+export function printedNumberOf(searchText: string, number: string | null): string | null {
+  const n = normalizeCardNumber(number);
+  if (n === "") return null;
+  return searchText.split(" ").find((t) => /^\d+\/\d+$/.test(t) && normalizeCardNumber(t) === n) ?? null;
+}
+
 export type MatchResult = { ok: true; card: PokeTraceCard } | { ok: false; reason: string };
 
 export function pickBestMatch(
@@ -105,7 +115,7 @@ export function pickBestMatch(
       setScore: setNameScore(ours.setName, c.set?.name ?? ""),
       score:
         setNameScore(ours.setName, c.set?.name ?? "") * 10 +
-        (normalizeSearch(c.name) === normalizeSearch(ours.name) ? 5 : 0) +
+        (normalizeSearch(c.name.replace(/\s*\(.*\)\s*$/, "")) === normalizeSearch(ours.name) ? 5 : 0) +
         (VARIANT_PREFERENCE[c.variant ?? ""] ?? 1),
     }))
     .filter((s) => s.setScore > 0)
@@ -121,22 +131,32 @@ export function pickBestMatch(
   return { ok: true, card: scored[0].card };
 }
 
-/** Finds our card on PokeTrace. 1–2 requests. */
+/**
+ * Finds our card on PokeTrace. 1–3 requests, cheapest-likely-hit first:
+ *   1. "<name> <set>" — puts the right set's prints in the first page even for cards
+ *      with dozens of reprints (plain "snorlax" returns 20 of ~60 and misses Jungle).
+ *   2. name + card_number in the printed "27/64" form (the bare "27" matches nothing).
+ *   3. name only.
+ */
 export async function findPokeTraceCard(ours: {
   name: string;
   setName: string;
   number: string | null;
+  printedNumber?: string | null; // "27/64", when the catalog knows the set total
 }): Promise<{ refs: ExternalRefs } | { error: string }> {
-  const base = { search: ours.name, game: "pokemon", market: "US", product_type: "single", limit: "20" };
-  let page = await request<Page<PokeTraceCard>>("/cards", ours.number ? { ...base, card_number: ours.number } : base);
-  let match = pickBestMatch(ours, page.data);
-  // Their card_number filter may expect "199/165"-style numbers; retry by name only.
-  if (!match.ok && ours.number) {
-    page = await request<Page<PokeTraceCard>>("/cards", base);
-    match = pickBestMatch(ours, page.data);
+  const base = { game: "pokemon", market: "US", product_type: "single", limit: "20" };
+  const attempts: Array<Record<string, string>> = [{ ...base, search: `${ours.name} ${ours.setName}` }];
+  if (ours.printedNumber) attempts.push({ ...base, search: ours.name, card_number: ours.printedNumber });
+  attempts.push({ ...base, search: ours.name });
+
+  let lastReason = "";
+  for (const params of attempts) {
+    const page = await request<Page<PokeTraceCard>>("/cards", params);
+    const match = pickBestMatch(ours, page.data);
+    if (match.ok) return { refs: { poketraceId: match.card.id, tcgplayerId: match.card.refs?.tcgplayerId ?? null } };
+    lastReason = match.reason;
   }
-  if (!match.ok) return { error: match.reason };
-  return { refs: { poketraceId: match.card.id, tcgplayerId: match.card.refs?.tcgplayerId ?? null } };
+  return { error: `${lastReason} ${MATCHER_VERSION_TAG}` };
 }
 
 // ---------- raw daily history ----------

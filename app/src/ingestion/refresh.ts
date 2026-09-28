@@ -9,7 +9,7 @@ import { getPrisma } from "../lib/prisma";
 import { cacheDelete } from "../serving/cache";
 import { ApiError } from "./sources/http";
 import { QuotaExhaustedError } from "./sources/quota";
-import { fetchRawHistory, findPokeTraceCard, isPokeTraceConfigured } from "./sources/poketrace";
+import { fetchRawHistory, findPokeTraceCard, isPokeTraceConfigured, MATCHER_VERSION_TAG, printedNumberOf } from "./sources/poketrace";
 import { fetchGradedHistory, isPptConfigured } from "./sources/pokemonpricetracker";
 import type { DailyPoint } from "./sources/types";
 
@@ -153,7 +153,12 @@ export async function refreshCard(
     const firstFetch = tracking.lastRefreshedAt === null;
 
     // 1. Link to PokeTrace once; that also yields the TCGplayer ID PokemonPriceTracker needs.
-    const mappingFresh = tracking.mappedAt && now.getTime() - tracking.mappedAt.getTime() < MAPPING_RETRY_MS;
+    // Failures without the matcher-version marker came from the old matcher (it missed cards whose
+    // name has many reprints) — treat them as stale so they retry once instead of waiting a week.
+    const mappingFresh =
+      tracking.mappedAt &&
+      tracking.mappingError?.includes(MATCHER_VERSION_TAG) &&
+      now.getTime() - tracking.mappedAt.getTime() < MAPPING_RETRY_MS;
     if (!tracking.poketraceId && mappingFresh) {
       result.mapping = skipped(`recent match attempt failed: ${tracking.mappingError ?? "unknown"}`);
     } else if (!tracking.poketraceId) {
@@ -161,7 +166,12 @@ export async function refreshCard(
         result.mapping = skipped("POKETRACE_API_KEY not set");
       } else {
         try {
-          const found = await findPokeTraceCard({ name: card.name, setName: card.setName, number: card.number });
+          const found = await findPokeTraceCard({
+            name: card.name,
+            setName: card.setName,
+            number: card.number,
+            printedNumber: printedNumberOf(card.searchText, card.number),
+          });
           if ("refs" in found) {
             tracking = await prisma.trackedCard.update({
               where: { cardId },
