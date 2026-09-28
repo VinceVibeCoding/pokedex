@@ -63,6 +63,23 @@ export async function trackCard(cardId: string): Promise<boolean> {
   return true;
 }
 
+/** Largest set we'll queue in one go — keeps one click from swamping the shared daily budget. */
+export const MAX_SET_TRACK = 400;
+
+/**
+ * Starts tracking every card in a set (idempotent, no price fetches here). New rows have
+ * lastRefreshedAt = null, so the daily job picks them up first (see watchlistPriority);
+ * the free API budgets mean a set fills in over one to a few days.
+ */
+export async function trackSet(setCode: string): Promise<{ setName: string; total: number; newlyTracked: number } | "not-found" | "too-large"> {
+  const prisma = getPrisma();
+  const cards = await prisma.card.findMany({ where: { setCode }, select: { id: true, setName: true } });
+  if (cards.length === 0) return "not-found";
+  if (cards.length > MAX_SET_TRACK) return "too-large";
+  const created = await prisma.trackedCard.createMany({ data: cards.map((c) => ({ cardId: c.id })), skipDuplicates: true });
+  return { setName: cards[0].setName, total: cards.length, newlyTracked: created.count };
+}
+
 function outcomeOf(err: unknown): SourceOutcome {
   if (err instanceof QuotaExhaustedError) return { status: "quota", resetsAt: err.resetsAt.toISOString() };
   return { status: "failed", error: err instanceof Error ? err.message : String(err) };

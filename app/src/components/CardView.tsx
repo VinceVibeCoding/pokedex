@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { AddToWatchlist } from "./AddToWatchlist";
+import { TrackSetButton } from "./TrackSetButton";
 import { CardSearch } from "./CardSearch";
 import { CardThumb } from "./CardThumb";
 import { LiveFreshness } from "./LiveFreshness";
@@ -88,7 +89,10 @@ export function CardView({ lookup }: { lookup: CardLookupResponse }) {
       </section>
 
       <PriceStatus cardId={card.id} tracking={tracking} />
-      <AddToWatchlist cardId={card.id} tier={tier} priceCents={selected.priceGuide?.marketPriceCents ?? null} />
+      <div className="flex flex-wrap gap-2">
+        <AddToWatchlist cardId={card.id} tier={tier} priceCents={selected.priceGuide?.marketPriceCents ?? null} />
+        <TrackSetButton setCode={card.setCode} setName={card.setName} />
+      </div>
 
       <GradePicker
         tiers={tiers}

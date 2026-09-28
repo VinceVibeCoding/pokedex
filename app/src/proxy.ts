@@ -1,10 +1,10 @@
 // Next.js 16 request-interception file (middleware.ts on 15 and earlier).
-// Only the watchlist page and its API need a session; card lookups, search, and
+// Only the watchlist page, its API and set tracking need a session; card lookups, search, and
 // the cron endpoint (which authenticates itself via CRON_SECRET) stay public.
 
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-const isProtectedRoute = createRouteMatcher(["/watchlist(.*)", "/api/watchlist(.*)"]);
+const isProtectedRoute = createRouteMatcher(["/watchlist(.*)", "/api/watchlist(.*)", "/api/sets(.*)"]);
 
 export default clerkMiddleware(async (auth, req) => {
   if (isProtectedRoute(req)) await auth.protect();
