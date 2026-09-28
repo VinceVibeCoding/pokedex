@@ -11,7 +11,7 @@
 
 import "dotenv/config";
 import { getPrisma } from "../src/lib/prisma";
-import { refreshCard, sourcesConfigured, trackCard, type SourceOutcome } from "../src/ingestion/refresh";
+import { refreshCard, sourcesConfigured, trackCard, watchlistPriority, type SourceOutcome } from "../src/ingestion/refresh";
 import { quotaStatus } from "../src/ingestion/sources/quota";
 import { ingestCard } from "../src/ingestion/pipeline";
 import { recomputeRollups } from "../src/ingestion/rollup";
@@ -98,11 +98,9 @@ async function main() {
   if (cardId) {
     await refreshOne(cardId);
   } else {
-    // Stalest first, so if the budget runs out the oldest prices got updated.
-    const tracked = await prisma.trackedCard.findMany({
-      orderBy: [{ lastRefreshedAt: { sort: "asc", nulls: "first" } }],
-      select: { cardId: true },
-    });
+    // Watchlisted cards first, then stalest first, so if the budget runs out the
+    // cards someone actually owns got updated.
+    const tracked = await watchlistPriority();
     console.log(`Refreshing ${tracked.length} tracked card(s)…`);
     for (const { cardId: id } of tracked) {
       const r = await refreshOne(id);

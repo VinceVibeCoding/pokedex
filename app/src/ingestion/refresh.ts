@@ -36,6 +36,24 @@ export function sourcesConfigured(): boolean {
   return isPokeTraceConfigured() || isPptConfigured();
 }
 
+/**
+ * Tracked cards in refresh order: every card watchlisted by any user first
+ * (so owners' prices stay freshest within the shared budget), then the rest —
+ * stalest first within each group. Used by both the daily cron and `npm run ingest`.
+ */
+export async function watchlistPriority(): Promise<Array<{ cardId: string }>> {
+  const prisma = getPrisma();
+  const [tracked, watchlisted] = await Promise.all([
+    prisma.trackedCard.findMany({
+      orderBy: [{ lastRefreshedAt: { sort: "asc", nulls: "first" } }],
+      select: { cardId: true },
+    }),
+    prisma.watchlistItem.findMany({ distinct: ["cardId"], select: { cardId: true } }),
+  ]);
+  const priority = new Set(watchlisted.map((w) => w.cardId));
+  return [...tracked].sort((a, b) => Number(priority.has(b.cardId)) - Number(priority.has(a.cardId)));
+}
+
 /** Starts tracking a card (idempotent). Tracked cards are refreshed by the daily job. */
 export async function trackCard(cardId: string): Promise<boolean> {
   const prisma = getPrisma();

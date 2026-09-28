@@ -26,6 +26,15 @@ export function formatAgo(iso: string, now: Date = new Date()): string {
   return `${Math.floor(days / 365)}y ago`;
 }
 
+/** Fine-grained freshness for the live "data is Xm old" ticker: "just now", "3m ago", "2h ago", then falls back to formatAgo's day granularity. */
+export function formatFreshness(iso: string, now: Date = new Date()): string {
+  const seconds = Math.floor((now.getTime() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h ago`;
+  return formatAgo(iso, now);
+}
+
 export function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }

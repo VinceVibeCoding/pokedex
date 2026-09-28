@@ -5,8 +5,10 @@
 // fair price and max buy price at the top, supporting evidence below.
 
 import { useEffect, useState } from "react";
+import { AddToWatchlist } from "./AddToWatchlist";
 import { CardSearch } from "./CardSearch";
 import { CardThumb } from "./CardThumb";
+import { LiveFreshness } from "./LiveFreshness";
 import { PriceChart, type ChartPoint } from "./PriceChart";
 import { PriceStatus } from "./PriceStatus";
 import { formatAgo, formatCents, formatDate, formatPct } from "@/lib/format";
@@ -80,12 +82,13 @@ export function CardView({ lookup }: { lookup: CardLookupResponse }) {
             {card.pullRate ? ` · ~1 in ${Math.round(1 / card.pullRate)} packs` : ""}
           </p>
           <p className="mt-2 text-xs text-ink-3">
-            {dataFreshnessAt ? `Prices updated ${formatAgo(dataFreshnessAt, asOf)}` : "No price data collected yet"}
+            <LiveFreshness at={dataFreshnessAt} />
           </p>
         </div>
       </section>
 
       <PriceStatus cardId={card.id} tracking={tracking} />
+      <AddToWatchlist cardId={card.id} tier={tier} priceCents={selected.priceGuide?.marketPriceCents ?? null} />
 
       <GradePicker
         tiers={tiers}

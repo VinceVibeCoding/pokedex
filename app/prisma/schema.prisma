@@ -62,10 +62,11 @@ model Card {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  comps       Comp[]
-  rollups     CompRollup[]
-  dailyPrices DailyPrice[]
-  tracking    TrackedCard?
+  comps          Comp[]
+  rollups        CompRollup[]
+  dailyPrices    DailyPrice[]
+  tracking       TrackedCard?
+  watchlistItems WatchlistItem[]
 
   @@index([searchText(ops: raw("gin_trgm_ops"))], type: Gin)
   @@map("cards")
@@ -161,6 +162,29 @@ model TrackedCard {
 
   @@index([lastRefreshedAt])
   @@map("tracked_cards")
+}
+
+/// A card a user owns (or a lot of them) — quantity + cost basis, so P&L is
+/// just current price × quantity − acquiredPriceCents. One row per user +
+/// card + grade; buying more of the same card+grade updates quantity/avg
+/// cost rather than creating a second row (no per-lot tracking in v1).
+model WatchlistItem {
+  id                 String    @id @default(cuid())
+  userId             String // Clerk user id
+  cardId             String
+  gradeTier          GradeTier
+  quantity           Int       @default(1)
+  acquiredPriceCents Int? // avg price paid per unit; null = "unknown, just watching"
+  acquiredAt         DateTime?
+  note               String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cardId, gradeTier])
+  @@index([userId])
+  @@map("watchlist_items")
 }
 
 /// Per-source daily API budget. Lets every process (web + cron) stop before

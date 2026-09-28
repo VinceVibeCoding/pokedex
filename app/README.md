@@ -54,9 +54,19 @@ Copy `.env.example`-style values into `app/.env` (already gitignored — see bel
 | `POKETRACE_API_KEY` | Raw (near-mint) daily price history | https://poketrace.com → sign up → dashboard |
 | `POKEMONPRICETRACKER_API_KEY` | PSA 8/9/10 graded price history | https://www.pokemonpricetracker.com → sign up |
 | `ANTHROPIC_API_KEY` | Search-by-photo (reads the card off an uploaded image) | https://console.anthropic.com → API Keys → **create the key scoped to a specific workspace**, not org-wide, or vision calls fail with a workspace-scoping error |
+| `CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Sign-in and the watchlist | Vercel Marketplace → `vercel integration add clerk` (auto-provisions both; run `vercel env pull` to get them locally) |
 
 Leave any of these empty to run without that feature — the app degrades gracefully
-(no live prices, or the photo-search button returns "not configured").
+(no live prices, or the photo-search button returns "not configured"). Without the
+Clerk keys, sign-in is broken — install the Clerk integration before running the
+app if you want the watchlist.
+
+Also add, so Clerk's drop-in pages route correctly:
+
+```
+NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+```
 
 See `.obsidian-vault/decisions/2026-09-25-data-source.md` for why these two price
 sources were chosen and how the free-tier budgets work.
@@ -73,8 +83,19 @@ Open http://localhost:3000.
 
 There's no cron running by default. A card's prices refresh when:
 
-- someone opens that card's page (throttled to once per 30 min per card), or
-- you run `npm run ingest` by hand (refreshes every tracked card, stalest first)
+- someone opens that card's page (throttled to once per 30 min per card),
+- a signed-in user opens `/watchlist` (throttled to once per 15 min per card in
+  their watchlist — a tighter throttle than a bare card view, since checking your
+  own watchlist is a stronger freshness signal), or
+- you run `npm run ingest` by hand (refreshes every tracked card, **watchlisted
+  cards first**, then stalest first)
+
+There is deliberately no per-minute or per-hour polling of the price APIs: the
+free-tier budgets below are shared across every card anyone looks up, and can't
+support that. "Live" monitoring means watchlisted cards jump the queue and get
+refreshed far more often than the rest of the catalog, plus a client-side clock
+on every price ("updated 3m ago") that's honest about actual data age instead of
+implying a new price every minute.
 
 API quotas (PokeTrace 250 req/day, PokemonPriceTracker 100 credits/day) reset at
 UTC midnight. Check today's usage: `npm run ingest -- --status`.
