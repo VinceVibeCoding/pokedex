@@ -95,6 +95,11 @@ export default async function ScreenerPage({ searchParams }: { searchParams: Pro
             {SORTS.map((s) => <Link key={s.value} href={href({ sort: s.value === "trend" ? null : s.value })} className={pill(sort === s.value)}>{s.label}</Link>)}
           </div>
 
+          {res.coverage.withOwnHistory === 0 && res.coverage.withCardmarket === 0 && (
+            <p className="rounded-xl border border-line bg-surface p-4 text-sm text-ink-2">
+              <strong className="text-ink">Trends are still building.</strong> We record every card&apos;s price daily; 7-day trends appear once a week of history exists and 30-day trends after a month. Until then the flags below stay empty, and you can still browse and filter all {res.coverage.cards.toLocaleString()} priced cards. (The free Cardmarket feed we could use meanwhile is out of date, so we deliberately don&apos;t use it.)
+            </p>
+          )}
           <p className="text-sm text-ink-3">
             {res.total.toLocaleString()} cards · snapshot {res.day} · trend measured for {res.coverage.withCardmarket.toLocaleString()} cards via Cardmarket and {res.coverage.withOwnHistory.toLocaleString()} from our own price history (grows daily) · sales volume only for cards we track
           </p>

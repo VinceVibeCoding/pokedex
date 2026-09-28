@@ -135,8 +135,10 @@ export async function getScreener(opts: ScreenerOptions = {}): Promise<ScreenerR
     volume: (a, b) => num(b.salesPerWeek, -1) - num(a.salesPerWeek, -1),
   };
   // With a tag selected, hide rows that can't be ranked by the chosen sort rather than burying them.
-  const ranked = filtered.filter((r) => (sort === "trend" ? r.trendPct !== null : sort === "dip" ? r.cmDipPct !== null : sort === "volume" ? r.salesPerWeek !== null : true));
-  ranked.sort(order[sort]);
+  const anyTrend = u.rows.some((r) => r.trendPct !== null);
+  const effectiveSort: ScreenerSort = sort === "trend" && !anyTrend ? "price" : sort;
+  const ranked = filtered.filter((r) => (effectiveSort === "trend" ? r.trendPct !== null : effectiveSort === "dip" ? r.cmDipPct !== null : effectiveSort === "volume" ? r.salesPerWeek !== null : true));
+  ranked.sort(order[effectiveSort]);
 
   const start = (Math.max(page, 1) - 1) * SCREENER_PAGE_SIZE;
   return {

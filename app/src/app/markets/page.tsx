@@ -40,6 +40,11 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
         </p>
       ) : (
         <>
+          {withChange.length === 0 && (
+            <p className="rounded-xl border border-line bg-surface p-4 text-sm text-ink-2">
+              <strong className="text-ink">Changes are still building.</strong> We record every card&apos;s price daily; a 7-day change appears once a week of history exists (from about 5 Oct 2026) and a 30-day change after a month. Total values below are live.
+            </p>
+          )}
           {(rising.length > 0 || falling.length > 0) && (
             <section className="grid gap-3 md:grid-cols-2">
               <Recap title={`Leading ${view.noun}s`} segments={rising} color="var(--good)" />

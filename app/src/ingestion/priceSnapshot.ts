@@ -84,8 +84,9 @@ async function fetchPage(page: number, attempt = 1): Promise<ApiPage> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as ApiPage;
   } catch (err) {
-    if (attempt >= 5) throw err; // free tier throws runs of 500s; the caller resumes from this page
-    await new Promise((r) => setTimeout(r, Math.min(2000 * attempt, 15_000)));
+    // The free tier throws runs of 500/502s; ride them out, and if we still lose, say which page to resume from.
+    if (attempt >= 10) throw new Error(`pokemontcg.io kept failing on page ${page} (${(err as Error).message}) — resume from page ${page}`);
+    await new Promise((r) => setTimeout(r, Math.min(1500 * attempt, 20_000)));
     return fetchPage(page, attempt + 1);
   }
 }
@@ -115,7 +116,7 @@ export interface SnapshotRun { day: string; nextPage: number | null; pages: numb
  * Snapshots pages starting at `startPage` until the catalog ends or `deadlineMs` passes.
  * `nextPage` is null when the whole catalog is done, otherwise where to resume.
  */
-export async function snapshotPrices({ startPage = 1, deadlineMs = Infinity, now = new Date() }: { startPage?: number; deadlineMs?: number; now?: Date } = {}): Promise<SnapshotRun> {
+export async function snapshotPrices({ startPage = 1, deadlineMs = Infinity, now = new Date(), onPage }: { startPage?: number; deadlineMs?: number; now?: Date; onPage?: (page: number, saved: number, total: number) => void } = {}): Promise<SnapshotRun> {
   const day = now.toISOString().slice(0, 10);
   let page = startPage;
   let saved = 0;
@@ -124,6 +125,7 @@ export async function snapshotPrices({ startPage = 1, deadlineMs = Infinity, now
     const result = await fetchPage(page);
     total = result.totalCount;
     saved += await saveRows(result.data.map(toSnapshotRow).filter((r): r is SnapshotRow => r !== null), day);
+    onPage?.(page, saved, total);
     const done = page * SNAPSHOT_PAGE_SIZE >= total || result.data.length === 0;
     if (done) {
       await getPrisma().$executeRaw`DELETE FROM card_price_snapshots WHERE "date" < ${new Date(now.getTime() - RETENTION_DAYS * 86_400_000).toISOString().slice(0, 10)}::date`;

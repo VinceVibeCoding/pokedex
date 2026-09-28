@@ -11,7 +11,7 @@ import { snapshotPrices } from "../src/ingestion/priceSnapshot";
 async function main() {
   const flag = process.argv.indexOf("--start-page");
   const startPage = flag >= 0 ? Number(process.argv[flag + 1]) : 1;
-  const run = await snapshotPrices({ startPage });
+  const run = await snapshotPrices({ startPage, onPage: (page, saved, total) => console.log(`  page ${page}/${Math.ceil(total / 250)} · ${saved} rows saved`) });
   console.log(`Snapshot ${run.day}: ${run.saved} price rows from ${run.pages} pages (${run.total} cards in the feed).`);
 }
 
