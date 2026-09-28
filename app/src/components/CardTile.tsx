@@ -14,6 +14,7 @@ export function CardTile({
   priceCents,
   changePct,
   meta,
+  badge,
 }: {
   cardId: string;
   name: string;
@@ -23,6 +24,7 @@ export function CardTile({
   priceCents: number;
   changePct?: number;
   meta?: string;
+  badge?: string; // e.g. the sale's source
 }) {
   return (
     <Link
@@ -34,6 +36,9 @@ export function CardTile({
         <span className="absolute left-2 top-2 rounded-md bg-bg/80 px-1.5 py-0.5 text-[11px] font-semibold backdrop-blur">
           {GRADE_LABELS[gradeTier]}
         </span>
+        {badge && (
+          <span className="absolute right-2 top-2 rounded-md border border-line bg-bg/80 px-1.5 py-0.5 text-[11px] text-ink-2 backdrop-blur">{badge}</span>
+        )}
       </div>
       <div className="flex flex-col gap-0.5 p-3">
         <div className="truncate text-sm font-medium group-hover:underline">{name}</div>
