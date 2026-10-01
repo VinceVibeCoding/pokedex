@@ -9,6 +9,7 @@ import { getPrisma } from "../lib/prisma";
 import { formatCents, formatPct } from "../lib/format";
 import { getScreener } from "../serving/screener";
 import { paramsFromQuery, parseScreenerParams } from "../serving/screenerParams";
+import { signUnsubscribeToken } from "../lib/unsubscribe";
 
 export const DIGEST_TOP = 200;
 const MAX_CARDS_PER_SCREEN = 8;
@@ -30,7 +31,7 @@ export interface DigestScreen {
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-export function formatDigest(screens: DigestScreen[], siteUrl: string): { subject: string; html: string; text: string } {
+export function formatDigest(screens: DigestScreen[], siteUrl: string, unsubscribeUrl: string): { subject: string; html: string; text: string } {
   const total = screens.reduce((a, s) => a + s.totalNew, 0);
   const subject = total === 1 ? "1 new card matches your saved screens" : `${total} new cards match your saved screens`;
   const line = (c: DigestCard) =>
@@ -45,6 +46,7 @@ export function formatDigest(screens: DigestScreen[], siteUrl: string): { subjec
     ]),
     "These are leads to check against recent sales, not buy advice.",
     `Manage alerts: ${siteUrl}/screens`,
+    `Unsubscribe from all alert emails: ${unsubscribeUrl}`,
   ].filter((l, i, a) => !(l === "" && a[i - 1] === "")).join("\n");
 
   const html = `<div style="font-family:system-ui,sans-serif;max-width:560px">
@@ -56,7 +58,7 @@ ${screens
       .join("")}</ul>${s.totalNew > s.newCards.length ? `<p style="margin:4px 0"><a href="${esc(siteUrl)}/screener?${esc(s.query)}">…and ${s.totalNew - s.newCards.length} more</a></p>` : ""}`,
   )
   .join("\n")}
-<p style="color:#666;font-size:13px;margin-top:20px">These are leads to check against recent sales, not buy advice. <a href="${esc(siteUrl)}/screens">Manage alerts</a></p>
+<p style="color:#666;font-size:13px;margin-top:20px">These are leads to check against recent sales, not buy advice. <a href="${esc(siteUrl)}/screens">Manage alerts</a> · <a href="${esc(unsubscribeUrl)}">Unsubscribe from all alert emails</a></p>
 </div>`;
   return { subject, html, text };
 }
@@ -72,11 +74,17 @@ async function emailOf(userId: string): Promise<string | null> {
   return user.emailAddresses.find((e) => e.id === user.primaryEmailAddressId)?.emailAddress ?? null;
 }
 
-async function send(to: string, mail: { subject: string; html: string; text: string }): Promise<void> {
+async function send(to: string, mail: { subject: string; html: string; text: string }, unsubscribeUrl: string, unsubscribePostUrl: string): Promise<void> {
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: process.env.DIGEST_FROM ?? "Card Index <onboarding@resend.dev>", to, ...mail }),
+    body: JSON.stringify({
+      from: process.env.DIGEST_FROM ?? "Card Index <onboarding@resend.dev>",
+      to,
+      ...mail,
+      // One-click unsubscribe (RFC 8058): Gmail/Apple Mail show their own Unsubscribe button and POST to this URL.
+      headers: { "List-Unsubscribe": `<${unsubscribePostUrl}>, <${unsubscribeUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+    }),
     signal: AbortSignal.timeout(20_000),
   });
   if (!res.ok) throw new Error(`Resend HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
@@ -113,7 +121,10 @@ export async function runDigests(): Promise<{ users: number; emails: number; ski
       if (digest.length > 0) {
         const to = await emailOf(userId);
         if (!to) continue; // no email on file: leave lastMatchIds alone so nothing is lost
-        await send(to, formatDigest(digest, siteUrl()));
+        const token = signUnsubscribeToken(userId);
+        const pageUrl = `${siteUrl()}/unsubscribe?token=${encodeURIComponent(token)}`;
+        const postUrl = `${siteUrl()}/api/unsubscribe?token=${encodeURIComponent(token)}`;
+        await send(to, formatDigest(digest, siteUrl(), pageUrl), pageUrl, postUrl);
         emails++;
       }
       // Only after a successful send (or nothing to send): record what has now been reported.

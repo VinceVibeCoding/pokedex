@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ClerkProvider, Show, SignInButton, UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
+import { EmailAlertsPanel } from "@/components/EmailAlertsPanel";
 import { NavLinks } from "@/components/NavLinks";
 import "./globals.css";
 
@@ -47,7 +48,20 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
                   </SignInButton>
                 }
               >
-                <UserButton />
+                <UserButton>
+                  <UserButton.UserProfilePage
+                    label="Email alerts"
+                    url="email-alerts"
+                    labelIcon={
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+                        <rect x="3" y="5" width="18" height="14" rx="2" />
+                        <path d="m3 7 9 6 9-6" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    }
+                  >
+                    <EmailAlertsPanel />
+                  </UserButton.UserProfilePage>
+                </UserButton>
               </Show>
             </div>
           </header>

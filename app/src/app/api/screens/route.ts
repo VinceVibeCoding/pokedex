@@ -1,6 +1,6 @@
 // GET    /api/screens            — the signed-in user's saved screens
 // POST   /api/screens            — save a screener filter { query, name? }
-// PATCH  /api/screens            — { id, notifyEmail } toggle email alerts
+// PATCH  /api/screens            — { id, notifyEmail } toggle email alerts; { all: true, notifyEmail: false } turns them all off
 // DELETE /api/screens?id=<id>    — remove one
 //
 // Auth-gated; the userId always comes from the Clerk session, never the request body.
@@ -44,7 +44,11 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Sign in required" }, { status: 401 });
-  const body = (await request.json().catch(() => null)) as { id?: unknown; notifyEmail?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as { id?: unknown; all?: unknown; notifyEmail?: unknown } | null;
+  if (body && body.all === true && body.notifyEmail === false) {
+    const { count } = await getPrisma().savedScreen.updateMany({ where: { userId, notifyEmail: true }, data: { notifyEmail: false } });
+    return NextResponse.json({ ok: true, turnedOff: count });
+  }
   if (!body || typeof body.id !== "string" || typeof body.notifyEmail !== "boolean") {
     return NextResponse.json({ error: "id and notifyEmail are required" }, { status: 400 });
   }
