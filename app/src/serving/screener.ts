@@ -5,7 +5,7 @@
 // minutes — it is identical for every visitor and costs three grouped queries to build.
 
 import { getPrisma } from "../lib/prisma";
-import { computeTrendSignals, eraOf, MIN_SCREEN_PRICE_CENTS, type Tag, type TrendSignals } from "../analysis/trends";
+import { computeTrendSignals, eraOf, MIN_SCREEN_PRICE_CENTS, type SoldWindows, type Tag, type TrendSignals } from "../analysis/trends";
 import { freshCutoff, latestSnapshotDay, thenPrices } from "./snapshotSql";
 
 export const SCREENER_PAGE_SIZE = 25;
@@ -15,6 +15,7 @@ export interface ScreenerRow extends TrendSignals {
   cardId: string;
   name: string;
   setName: string;
+  setCode: string;
   rarity: string;
   era: string;
   number: string | null;
@@ -52,11 +53,11 @@ async function buildUniverse(): Promise<Universe | null> {
 
   const raw = await prisma.$queryRaw<
     Array<{
-      cardId: string; name: string; setName: string; rarity: string; number: string | null; imageUrl: string | null; releaseDate: Date;
+      cardId: string; name: string; setName: string; setCode: string; rarity: string; number: string | null; imageUrl: string | null; releaseDate: Date;
       price: number; a1: number | null; a7: number | null; a30: number | null; cmu: Date | null; p7: number | null; p30: number | null;
     }>
   >`
-    SELECT s."cardId", c.name, c."setName", c.rarity, c.number, c."imageUrl", c."releaseDate",
+    SELECT s."cardId", c.name, c."setName", c."setCode", c.rarity, c.number, c."imageUrl", c."releaseDate",
            s."tcgMarketCents" AS price, s."cmAvg1Cents" AS a1, s."cmAvg7Cents" AS a7, s."cmAvg30Cents" AS a30, s."cmUpdatedAt" AS cmu,
            p7.m AS p7, p30.m AS p30
     FROM card_price_snapshots s
@@ -66,15 +67,36 @@ async function buildUniverse(): Promise<Universe | null> {
     WHERE s.date = ${day}::date AND s."tcgMarketCents" >= ${MIN_SCREEN_PRICE_CENTS}
   `;
 
-  // Sold-listing volume exists only for tracked cards: raw-tier sales in the last 30 days, best single source.
-  const sales = await prisma.$queryRaw<Array<{ cardId: string; n: number }>>`
-    SELECT "cardId", max(n)::float8 AS n FROM (
-      SELECT "cardId", source, sum("saleCount") AS n FROM daily_prices
-      WHERE "gradeTier" = 'raw' AND date >= ${new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10)}::date
-      GROUP BY "cardId", source
-    ) t GROUP BY "cardId"
+  // Sold-listing data exists only for tracked cards: raw-tier daily sales over the last 30 days. Per card
+  // we use ONE source (the one with the most sales) — PokeTrace's eBay and TCGplayer feeds overlap.
+  const DAY = 86_400_000;
+  const sinceSales = new Date(Date.now() - 30 * DAY).toISOString().slice(0, 10);
+  const salesRows = await prisma.$queryRaw<Array<{ cardId: string; source: string; date: Date; price: number; n: number }>>`
+    SELECT "cardId", source::text AS source, date, "avgPriceCents" AS price, "saleCount" AS n FROM daily_prices
+    WHERE "gradeTier" = 'raw' AND "saleCount" > 0 AND date >= ${sinceSales}::date
   `;
-  const perWeek = new Map(sales.map((r) => [r.cardId, (r.n / 30) * 7]));
+  const bySource = new Map<string, typeof salesRows>();
+  for (const r of salesRows) bySource.set(`${r.cardId}|${r.source}`, [...(bySource.get(`${r.cardId}|${r.source}`) ?? []), r]);
+  const bestRows = new Map<string, typeof salesRows>();
+  for (const [key, list] of bySource) {
+    const cardId = key.split("|")[0];
+    const total = list.reduce((a, r) => a + r.n, 0);
+    const cur = bestRows.get(cardId);
+    if (!cur || total > cur.reduce((a, r) => a + r.n, 0)) bestRows.set(cardId, list);
+  }
+  const windowOf = (list: typeof salesRows, days: number) => {
+    const from = Date.now() - days * DAY;
+    const inWin = list.filter((r) => r.date.getTime() >= from);
+    const n = inWin.reduce((a, r) => a + r.n, 0);
+    return { n, avg: n > 0 ? inWin.reduce((a, r) => a + r.price * r.n, 0) / n : null };
+  };
+  const soldByCard = new Map<string, SoldWindows>();
+  const perWeek = new Map<string, number>();
+  for (const [cardId, list] of bestRows) {
+    const w3 = windowOf(list, 3), w7 = windowOf(list, 7), w30 = windowOf(list, 30);
+    soldByCard.set(cardId, { avg3: w3.avg, avg7: w7.avg, avg30: w30.avg, sales3: w3.n, sales7: w7.n, sales30: w30.n });
+    perWeek.set(cardId, (w30.n / 30) * 7);
+  }
 
   const rows: ScreenerRow[] = raw.map((r) => {
     const cmFresh = r.cmu !== null && r.cmu.toISOString().slice(0, 10) >= fresh;
@@ -83,10 +105,11 @@ async function buildUniverse(): Promise<Universe | null> {
       own7dCents: r.p7,
       own30dCents: r.p30,
       cm: cmFresh ? { avg1: r.a1, avg7: r.a7, avg30: r.a30 } : null,
+      sold: soldByCard.get(r.cardId) ?? null,
       salesPerWeek: perWeek.get(r.cardId) ?? null,
     });
     return {
-      cardId: r.cardId, name: r.name, setName: r.setName, rarity: r.rarity, era: eraOf(r.releaseDate.getUTCFullYear()),
+      cardId: r.cardId, name: r.name, setName: r.setName, setCode: r.setCode, rarity: r.rarity, era: eraOf(r.releaseDate.getUTCFullYear()),
       number: r.number, imageUrl: r.imageUrl, priceCents: r.price, salesPerWeek: perWeek.get(r.cardId) ?? null, ...signals,
     };
   });
@@ -106,15 +129,13 @@ export interface ScreenerResult {
   total: number;
   day: string | null; // null = no snapshot loaded yet
   facets: { sets: string[]; rarities: string[]; eras: string[] };
-  coverage: { cards: number; withOwnHistory: number; withCardmarket: number };
+  coverage: { cards: number; withOwnHistory: number; withSales: number; withCardmarket: number };
 }
-
-const num = (v: number | null, dflt: number) => (v === null ? dflt : v);
 
 export async function getScreener(opts: ScreenerOptions = {}): Promise<ScreenerResult> {
   const { q = "", tag = null, set = null, rarity = null, era = null, minCents = null, maxCents = null, sort = "trend", page = 1 } = opts;
   const u = await universe();
-  if (!u) return { rows: [], total: 0, day: null, facets: { sets: [], rarities: [], eras: [] }, coverage: { cards: 0, withOwnHistory: 0, withCardmarket: 0 } };
+  if (!u) return { rows: [], total: 0, day: null, facets: { sets: [], rarities: [], eras: [] }, coverage: { cards: 0, withOwnHistory: 0, withSales: 0, withCardmarket: 0 } };
 
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const filtered = u.rows.filter(
@@ -128,17 +149,22 @@ export async function getScreener(opts: ScreenerOptions = {}): Promise<ScreenerR
       words.every((w) => `${r.name} ${r.setName} ${r.number ?? ""}`.toLowerCase().includes(w)),
   );
 
-  const order: Record<ScreenerSort, (a: ScreenerRow, b: ScreenerRow) => number> = {
-    trend: (a, b) => num(b.trendPct, -Infinity) - num(a.trendPct, -Infinity),
-    dip: (a, b) => num(a.cmDipPct, Infinity) - num(b.cmDipPct, Infinity),
-    price: (a, b) => b.priceCents - a.priceCents,
-    volume: (a, b) => num(b.salesPerWeek, -1) - num(a.salesPerWeek, -1),
+  // Cards that can't be ranked by the chosen sort (no trend yet, not tracked for volume…) go AFTER the
+  // ranked ones, by price — never hidden, so the full catalog stays browsable while data accumulates.
+  const key: Record<ScreenerSort, (r: ScreenerRow) => number | null> = {
+    trend: (r) => (r.trendPct === null ? null : -r.trendPct), // biggest rise first
+    dip: (r) => r.soldDipPct ?? r.cmDipPct, // deepest dip first (most negative)
+    volume: (r) => (r.salesPerWeek === null ? null : -r.salesPerWeek),
+    price: (r) => -r.priceCents,
   };
-  // With a tag selected, hide rows that can't be ranked by the chosen sort rather than burying them.
-  const anyTrend = u.rows.some((r) => r.trendPct !== null);
-  const effectiveSort: ScreenerSort = sort === "trend" && !anyTrend ? "price" : sort;
-  const ranked = filtered.filter((r) => (effectiveSort === "trend" ? r.trendPct !== null : effectiveSort === "dip" ? r.cmDipPct !== null : effectiveSort === "volume" ? r.salesPerWeek !== null : true));
-  ranked.sort(order[effectiveSort]);
+  const ranked = [...filtered].sort((a, b) => {
+    const ka = key[sort](a);
+    const kb = key[sort](b);
+    if (ka !== null && kb !== null) return ka - kb || b.priceCents - a.priceCents;
+    if (ka !== null) return -1;
+    if (kb !== null) return 1;
+    return b.priceCents - a.priceCents;
+  });
 
   const start = (Math.max(page, 1) - 1) * SCREENER_PAGE_SIZE;
   return {
@@ -153,6 +179,7 @@ export async function getScreener(opts: ScreenerOptions = {}): Promise<ScreenerR
     coverage: {
       cards: u.rows.length,
       withOwnHistory: u.rows.filter((r) => r.change7dPct !== null).length,
+      withSales: u.rows.filter((r) => r.soldMomentumPct !== null).length,
       withCardmarket: u.rows.filter((r) => r.cmMomentumPct !== null).length,
     },
   };

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computeTrendSignals, eraOf, pctChange, segmentHeadline } from "./trends";
 
-const base = { priceCents: 5000, own7dCents: null, own30dCents: null, cm: null, salesPerWeek: null };
+const base = { priceCents: 5000, own7dCents: null, own30dCents: null, cm: null, sold: null, salesPerWeek: null };
 
 describe("pctChange", () => {
   it("handles missing and zero baselines", () => {
@@ -35,6 +35,33 @@ describe("computeTrendSignals", () => {
   it("flags volume only when sold-listing data shows it", () => {
     expect(computeTrendSignals({ ...base, salesPerWeek: 8 }).tags).toContain("volume");
     expect(computeTrendSignals({ ...base, salesPerWeek: null }).tags).not.toContain("volume");
+  });
+});
+
+describe("sold-listing signals (tracked cards)", () => {
+  const sold = (o: Partial<{ avg3: number; avg7: number; avg30: number; sales3: number; sales7: number; sales30: number }> = {}) => ({
+    avg3: 100, avg7: 100, avg30: 100, sales3: 4, sales7: 9, sales30: 30, ...o,
+  });
+  it("uses sold momentum as the trend when there is no own history, ahead of Cardmarket", () => {
+    const s = computeTrendSignals({ ...base, sold: sold({ avg7: 125 }), cm: { avg1: 100, avg7: 150, avg30: 100 } });
+    expect(s.trendSource).toBe("sales");
+    expect(s.tags).toContain("trending");
+    expect(s.reasons[0]).toMatch(/Sold prices \+25\.0%/);
+  });
+  it("flags undervalued when the last 3 days sold below the 30-day average", () => {
+    const s = computeTrendSignals({ ...base, sold: sold({ avg3: 82, avg7: 95 }) });
+    expect(s.tags).toContain("undervalued");
+    expect(s.reasons.join()).toMatch(/Last 3 days of sales average -18\.0%/);
+  });
+  it("won't call a trend or a dip from thin sales", () => {
+    const thin = computeTrendSignals({ ...base, sold: sold({ avg7: 150, avg3: 50, sales7: 2, sales3: 1 }) });
+    expect(thin.soldMomentumPct).toBeNull();
+    expect(thin.soldDipPct).toBeNull();
+    expect(thin.tags).toEqual([]);
+    expect(computeTrendSignals({ ...base, sold: sold({ sales30: 5, avg7: 150 }) }).soldMomentumPct).toBeNull();
+  });
+  it("ignores a dip that is a collapse rather than a bargain", () => {
+    expect(computeTrendSignals({ ...base, sold: sold({ avg3: 85, avg7: 70 }) }).tags).not.toContain("undervalued");
   });
 });
 
