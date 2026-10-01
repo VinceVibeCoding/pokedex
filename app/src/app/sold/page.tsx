@@ -58,7 +58,7 @@ export default async function SoldPage({ searchParams }: { searchParams: Promise
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Sold History</h1>
         <p className="mt-1 text-ink-2">
-          Every card and grade that has sold, with its price history. Prices are each day&apos;s average sale price; eBay comes through two providers, so the same sale can appear twice in the last-sales list.
+          Every card and grade that has sold, with its price history. Rows marked “eBay · sale” are individual sales with a link to the listing; the others are each day&apos;s average from our price providers. eBay comes through two of them, so the same sale can appear twice in a last-sales list.
         </p>
       </div>
 
@@ -158,7 +158,13 @@ function SoldRow({ g }: { g: SoldGroup }) {
             {g.lastSales.map((s) => (
               <tr key={`${s.date}:${s.source}`} className="border-t border-line">
                 <td className="py-1.5 text-ink-2">{formatDate(s.date)}</td>
-                <td className="py-1.5 text-ink-2">{SOURCE_SHORT_LABELS[s.source]}{s.saleCount > 1 ? ` ×${s.saleCount}` : ""}</td>
+                <td className="py-1.5 text-ink-2">
+                  {s.url ? (
+                    <a href={s.url} target="_blank" rel="noopener noreferrer nofollow" className="hover:underline">{SOURCE_SHORT_LABELS[s.source]} ↗</a>
+                  ) : (
+                    <>{SOURCE_SHORT_LABELS[s.source]}{s.saleCount > 1 ? ` ×${s.saleCount}` : ""}</>
+                  )}
+                </td>
                 <td className="tabular py-1.5 text-right font-semibold">{formatCents(s.priceCents)}</td>
               </tr>
             ))}

@@ -9,12 +9,16 @@ import { searchCardIds } from "./search";
 import type { GradeTier } from "../types/domain";
 import type { DailySourceName } from "../ingestion/sources/types";
 
-export const SOURCE_SHORT_LABELS: Record<DailySourceName, string> = {
+/** Daily-summary sources plus individual eBay sales (SoldComps, stored as comps). */
+export type SoldSourceName = DailySourceName | "soldcomps_ebay";
+
+export const SOURCE_SHORT_LABELS: Record<SoldSourceName, string> = {
   ppt_ebay: "eBay · PPT",
   poketrace_ebay: "eBay · PokeTrace",
   poketrace_tcgplayer: "TCGplayer",
+  soldcomps_ebay: "eBay · sale",
 };
-export const SOLD_SOURCES = Object.keys(SOURCE_SHORT_LABELS) as DailySourceName[];
+export const SOLD_SOURCES = Object.keys(SOURCE_SHORT_LABELS) as SoldSourceName[];
 
 const SOURCE_PREFERENCE: DailySourceName[] = ["ppt_ebay", "poketrace_ebay", "poketrace_tcgplayer"];
 const LOOKBACK_DAYS = 30;
@@ -108,18 +112,18 @@ export interface SoldGroup {
   number: string | null;
   imageUrl: string | null;
   gradeTier: GradeTier;
-  latest: { date: string; priceCents: number; saleCount: number; source: DailySourceName };
+  latest: { date: string; priceCents: number; saleCount: number; source: SoldSourceName };
   vsLastPct: number | null; // latest sale day vs the sale day before it
   totalSales: number; // sales across the lookback, best source only
   history: Array<{ date: string; value: number }>; // ascending, best source only
-  lastSales: Array<{ date: string; source: DailySourceName; priceCents: number; saleCount: number }>; // every source, newest first
+  lastSales: Array<{ date: string; source: SoldSourceName; priceCents: number; saleCount: number; url: string | null }>; // newest first; url only for individual eBay sales
 }
 
 export interface SoldFeedOptions {
   grade?: GradeTier | null;
   sort?: SoldSort;
   q?: string;
-  source?: DailySourceName | null;
+  source?: SoldSourceName | null;
   minCents?: number | null;
   maxCents?: number | null;
   days?: number | null; // only groups whose latest sale is within N days
@@ -128,9 +132,11 @@ export interface SoldFeedOptions {
 }
 
 /**
- * One row per card + grade. Headline price, "vs last sale" and the chart come from ONE
- * source (the one with the most sales; ties → SOURCE_PREFERENCE) so overlapping eBay
- * feeds are never double counted; the "last sales" list shows every source, labeled.
+ * One row per card + grade. When individual eBay sales (SoldComps comps) exist for the group
+ * they are authoritative — real sales with a link each — and drive the headline price, "vs last
+ * sale", chart and last-sales list. Otherwise the headline comes from ONE daily source (the one
+ * with the most sales; ties → SOURCE_PREFERENCE) so overlapping eBay feeds are never double
+ * counted, and the "last sales" list shows every daily source, labeled.
  */
 export async function getSoldFeed(opts: SoldFeedOptions = {}): Promise<{ groups: SoldGroup[]; total: number; sets: string[] }> {
   const { grade = null, sort = "recent", q = "", source = null, minCents = null, maxCents = null, days = null, set = null, page = 1 } = opts;
@@ -138,17 +144,37 @@ export async function getSoldFeed(opts: SoldFeedOptions = {}): Promise<{ groups:
   const cardIds = q.trim() ? await searchCardIds(q) : null;
   if (cardIds && cardIds.length === 0) return { groups: [], total: 0, sets: [] };
 
-  const rows = await getPrisma().dailyPrice.findMany({
-    where: {
-      date: { gte: since },
-      saleCount: { gt: 0 },
-      ...(grade ? { gradeTier: grade } : {}),
-      ...(source ? { source } : {}),
-      ...(cardIds ? { cardId: { in: cardIds } } : {}),
-    },
-    orderBy: { date: "desc" },
-    select: { cardId: true, gradeTier: true, source: true, date: true, avgPriceCents: true, saleCount: true },
-  });
+  const dailySource = source && source !== "soldcomps_ebay" ? source : null;
+  const wantDaily = source !== "soldcomps_ebay";
+  const wantComps = source === null || source === "soldcomps_ebay";
+
+  const [rows, compRows] = await Promise.all([
+    wantDaily
+      ? getPrisma().dailyPrice.findMany({
+          where: {
+            date: { gte: since },
+            saleCount: { gt: 0 },
+            ...(grade ? { gradeTier: grade } : {}),
+            ...(dailySource ? { source: dailySource } : {}),
+            ...(cardIds ? { cardId: { in: cardIds } } : {}),
+          },
+          orderBy: { date: "desc" },
+          select: { cardId: true, gradeTier: true, source: true, date: true, avgPriceCents: true, saleCount: true },
+        })
+      : Promise.resolve([]),
+    wantComps
+      ? getPrisma().comp.findMany({
+          where: {
+            source: "soldcomps_ebay",
+            soldAt: { gte: since },
+            ...(grade ? { gradeTier: grade } : {}),
+            ...(cardIds ? { cardId: { in: cardIds } } : {}),
+          },
+          orderBy: { soldAt: "desc" },
+          select: { cardId: true, gradeTier: true, priceCents: true, soldAt: true, sourceUrl: true },
+        })
+      : Promise.resolve([]),
+  ]);
 
   const byGroup = new Map<string, typeof rows>();
   for (const r of rows) {
@@ -159,13 +185,13 @@ export async function getSoldFeed(opts: SoldFeedOptions = {}): Promise<{ groups:
   }
 
   const cards = await getPrisma().card.findMany({
-    where: { id: { in: [...new Set(rows.map((r) => r.cardId))] } },
+    where: { id: { in: [...new Set([...rows.map((r) => r.cardId), ...compRows.map((r) => r.cardId)])] } },
     select: { id: true, name: true, setName: true, number: true, imageUrl: true },
   });
   const cardById = new Map(cards.map((c) => [c.id, c]));
 
   const cutoff = days ? Date.now() - days * 86_400_000 : null;
-  const all: SoldGroup[] = [];
+  const groups = new Map<string, SoldGroup>();
   for (const bucket of byGroup.values()) {
     const card = cardById.get(bucket[0].cardId);
     if (!card) continue;
@@ -179,7 +205,7 @@ export async function getSoldFeed(opts: SoldFeedOptions = {}): Promise<{ groups:
     const primary = bucket.filter((r) => r.source === best); // newest first
     const latest = primary[0];
     const prev = primary[1];
-    all.push({
+    groups.set(`${card.id}:${latest.gradeTier}`, {
       cardId: card.id,
       cardName: card.name,
       setName: card.setName,
@@ -192,9 +218,35 @@ export async function getSoldFeed(opts: SoldFeedOptions = {}): Promise<{ groups:
       history: [...primary].reverse().map((r) => ({ date: r.date.toISOString().slice(0, 10), value: r.avgPriceCents })),
       lastSales: bucket
         .slice(0, LAST_SALES_SHOWN)
-        .map((r) => ({ date: r.date.toISOString(), source: r.source, priceCents: r.avgPriceCents, saleCount: r.saleCount })),
+        .map((r) => ({ date: r.date.toISOString(), source: r.source, priceCents: r.avgPriceCents, saleCount: r.saleCount, url: null })),
     });
   }
+
+  // Individual eBay sales replace the daily-average view of the same card + grade.
+  const compsByGroup = new Map<string, typeof compRows>();
+  for (const c of compRows) {
+    const key = `${c.cardId}:${c.gradeTier}`;
+    compsByGroup.set(key, [...(compsByGroup.get(key) ?? []), c]); // newest first
+  }
+  for (const [key, list] of compsByGroup) {
+    const card = cardById.get(list[0].cardId);
+    if (!card) continue;
+    const [latest, prev] = list;
+    groups.set(key, {
+      cardId: card.id,
+      cardName: card.name,
+      setName: card.setName,
+      number: card.number,
+      imageUrl: card.imageUrl,
+      gradeTier: latest.gradeTier,
+      latest: { date: latest.soldAt.toISOString(), priceCents: latest.priceCents, saleCount: 1, source: "soldcomps_ebay" },
+      vsLastPct: prev && prev.priceCents > 0 ? ((latest.priceCents - prev.priceCents) / prev.priceCents) * 100 : null,
+      totalSales: list.length,
+      history: [...list].reverse().map((c) => ({ date: c.soldAt.toISOString().slice(0, 10), value: c.priceCents })),
+      lastSales: list.slice(0, LAST_SALES_SHOWN).map((c) => ({ date: c.soldAt.toISOString(), source: "soldcomps_ebay" as const, priceCents: c.priceCents, saleCount: 1, url: c.sourceUrl })),
+    });
+  }
+  const all = [...groups.values()];
 
   const sets = [...new Set(all.map((g) => g.setName))].sort();
   const filtered = all.filter(
