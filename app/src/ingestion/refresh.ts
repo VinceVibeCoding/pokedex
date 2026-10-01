@@ -49,7 +49,7 @@ export async function watchlistPriority(): Promise<Array<{ cardId: string }>> {
   const prisma = getPrisma();
   const [tracked, watchlisted] = await Promise.all([
     prisma.trackedCard.findMany({
-      orderBy: [{ lastRefreshedAt: { sort: "asc", nulls: "first" } }],
+      orderBy: [{ lastRefreshedAt: { sort: "asc", nulls: "first" } }, { trackedAt: "asc" }],
       select: { cardId: true },
     }),
     prisma.watchlistItem.findMany({ distinct: ["cardId"], select: { cardId: true } }),

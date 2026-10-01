@@ -7,6 +7,7 @@
 // rejected. Mirrors scripts/ingest.ts's no-args mode.
 
 import { NextRequest, NextResponse } from "next/server";
+import { autoTrackChaseCards } from "@/ingestion/chase";
 import { refreshCard, sourcesConfigured, watchlistPriority } from "@/ingestion/refresh";
 
 export const maxDuration = 300; // seconds — Hobby's max; refreshing many cards can take a while
@@ -19,6 +20,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ started: false, reason: "No price API keys configured" });
   }
 
+  // Grow the tracked set toward the most valuable cards, a few dozen a day (see chase.ts).
+  const chase = await autoTrackChaseCards();
   const tracked = await watchlistPriority();
 
   let refreshed = 0;
@@ -29,5 +32,5 @@ export async function GET(request: NextRequest) {
     if (r.raw.status === "quota" && r.graded.status === "quota") break;
   }
 
-  return NextResponse.json({ tracked: tracked.length, refreshed });
+  return NextResponse.json({ tracked: tracked.length, refreshed, chase });
 }

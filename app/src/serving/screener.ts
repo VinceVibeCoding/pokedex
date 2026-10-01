@@ -37,6 +37,7 @@ export interface ScreenerOptions {
   maxCents?: number | null;
   sort?: ScreenerSort;
   page?: number;
+  pageSize?: number; // default SCREENER_PAGE_SIZE; background jobs ask for more
 }
 
 interface Universe {
@@ -97,6 +98,11 @@ async function buildUniverse(): Promise<Universe | null> {
   return { day, rows, builtAt: Date.now() };
 }
 
+/** Background jobs call this first: a warm serverless instance may hold a universe from before the snapshot ran. */
+export function resetScreenerCache(): void {
+  globalForScreener.screenerUniverse = undefined;
+}
+
 async function universe(): Promise<Universe | null> {
   const cached = globalForScreener.screenerUniverse;
   if (cached && Date.now() - cached.builtAt < CACHE_MS) return cached;
@@ -114,6 +120,7 @@ export interface ScreenerResult {
 }
 
 export async function getScreener(opts: ScreenerOptions = {}): Promise<ScreenerResult> {
+  const pageSize = Math.min(Math.max(opts.pageSize ?? SCREENER_PAGE_SIZE, 1), 5000);
   const { q = "", tag = null, set = null, rarity = null, era = null, minCents = null, maxCents = null, sort = "trend", page = 1 } = opts;
   const u = await universe();
   if (!u) return { rows: [], total: 0, day: null, facets: { sets: [], rarities: [], eras: [] }, coverage: { cards: 0, withOwnHistory: 0, withSales: 0, withCardmarket: 0 } };
@@ -147,9 +154,9 @@ export async function getScreener(opts: ScreenerOptions = {}): Promise<ScreenerR
     return b.priceCents - a.priceCents;
   });
 
-  const start = (Math.max(page, 1) - 1) * SCREENER_PAGE_SIZE;
+  const start = (Math.max(page, 1) - 1) * pageSize;
   return {
-    rows: ranked.slice(start, start + SCREENER_PAGE_SIZE),
+    rows: ranked.slice(start, start + pageSize),
     total: ranked.length,
     day: u.day,
     facets: {

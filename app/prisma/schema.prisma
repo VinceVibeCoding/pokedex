@@ -236,3 +236,36 @@ model SnapshotCursor {
 
   @@map("snapshot_cursor")
 }
+
+/// One row per card per day it was flagged "trending" or "undervalued" by the screener, with the
+/// price at flag time. Append-only: the track-record page compares that price to the price N days
+/// later, so the log can never be rewritten after the fact.
+model FlagLog {
+  date       DateTime @db.Date
+  cardId     String
+  tag        String // "trending" | "undervalued"
+  basis      String? // which data produced the flag: "own" | "sales" | "cardmarket"
+  priceCents Int // TCGplayer market (USD) when flagged
+  trendPct   Float?
+
+  @@id([date, cardId, tag])
+  @@index([date])
+  @@map("flag_log")
+}
+
+/// A user's saved screener filter. `query` is the /screener URL query string (e.g.
+/// "tag=trending&set=Jungle"). lastMatchIds are the cards already reported, so a digest only
+/// mentions NEW matches.
+model SavedScreen {
+  id            String    @id @default(cuid())
+  userId        String // Clerk user id
+  name          String
+  query         String
+  notifyEmail   Boolean   @default(false)
+  lastMatchIds  String[]  @default([])
+  lastEmailedAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([userId])
+  @@map("saved_screens")
+}

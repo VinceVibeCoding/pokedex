@@ -4,6 +4,8 @@ import { CardThumb } from "@/components/CardThumb";
 import { TrackSetButton } from "@/components/TrackSetButton";
 import { formatCents, formatPct } from "@/lib/format";
 import { getScreener, SCREENER_PAGE_SIZE, type ScreenerRow, type ScreenerSort } from "@/serving/screener";
+import { canonicalQuery, parseScreenerParams } from "@/serving/screenerParams";
+import { SaveScreenButton } from "@/components/SaveScreenButton";
 import type { Tag } from "@/analysis/trends";
 
 export const metadata: Metadata = { title: "Screener" };
@@ -24,22 +26,14 @@ const SORTS: Array<{ value: ScreenerSort; label: string }> = [
 ];
 const TAG_STYLE: Record<Tag, string> = { trending: "var(--good)", undervalued: "var(--accent)", volume: "var(--warning)" };
 
-const dollars = (v: string | undefined) => {
-  const n = Number.parseFloat(v ?? "");
-  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
-};
-
 export default async function ScreenerPage({ searchParams }: { searchParams: Promise<Params> }) {
   const sp = await searchParams;
   const tag = TAGS.find((t) => t.value === sp.tag)?.value ?? null;
   const sort = SORTS.find((s) => s.value === sp.sort)?.value ?? "trend";
   const q = (sp.q ?? "").trim();
   const page = Math.max(1, Number.parseInt(sp.page ?? "1", 10) || 1);
-  const res = await getScreener({
-    q, tag, sort, page,
-    set: sp.set || null, rarity: sp.rarity || null, era: sp.era || null,
-    minCents: dollars(sp.min), maxCents: dollars(sp.max),
-  });
+  const res = await getScreener({ ...parseScreenerParams(sp), page });
+  const saveQuery = canonicalQuery(sp);
   const pages = Math.max(1, Math.ceil(res.total / SCREENER_PAGE_SIZE));
 
   const current: Record<string, string | null> = { q: q || null, tag, sort: sort === "trend" ? null : sort, set: sp.set || null, rarity: sp.rarity || null, era: sp.era || null, min: sp.min || null, max: sp.max || null };
@@ -111,6 +105,8 @@ export default async function ScreenerPage({ searchParams }: { searchParams: Pro
               <TrackSetButton setCode={res.rows[0].setCode} setName={sp.set} />
             </div>
           )}
+
+          <SaveScreenButton query={saveQuery} />
 
           {res.rows.length === 0 ? (
             <p className="rounded-xl border border-line bg-surface p-6 text-ink-2">No cards match these filters.</p>

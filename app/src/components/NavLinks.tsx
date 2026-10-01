@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const LINKS = [
   { href: "/screener", label: "Screener" },
   { href: "/markets", label: "Markets" },
+  { href: "/track-record", label: "Track record" },
   { href: "/sold", label: "Sold History" },
   { href: "/indexes", label: "Indexes" },
   { href: "/news", label: "News" },
@@ -13,7 +14,7 @@ const LINKS = [
 
 export function NavLinks({ signedIn }: { signedIn: boolean }) {
   const pathname = usePathname();
-  const links = signedIn ? [...LINKS, { href: "/watchlist", label: "Watchlist" }] : LINKS;
+  const links = signedIn ? [...LINKS, { href: "/screens", label: "My screens" }, { href: "/watchlist", label: "Watchlist" }] : LINKS;
   return (
     <nav className="flex items-center gap-1 overflow-x-auto text-sm">
       {links.map((l) => {
