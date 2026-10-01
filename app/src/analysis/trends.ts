@@ -147,3 +147,46 @@ export function segmentHeadline(s: SegmentStats): string | null {
   const span = s.window === "7d" ? "over 7 days" : s.window === "30d" ? "over 30 days" : "(Cardmarket 7-day vs 30-day average)";
   return `${s.label} ${dir} ${Math.abs(s.changePct).toFixed(1)}% ${span} across ${s.cards.toLocaleString()} cards${breadth}`;
 }
+
+// ---------- market recap (plain-language summary of a segment table) ----------
+export interface RecapSegment {
+  key: string;
+  cards: number;
+  valueCents: number;
+  changePct: number | null;
+  headline: string | null;
+  volume: { trackedCards: number; sales7: number; salesPrev7: number } | null; // sold listings, tracked cards only
+}
+
+const usd = (cents: number) =>
+  cents >= 100_000_000 ? `$${(cents / 100_000_000).toFixed(1)}M` : `$${Math.round(cents / 100).toLocaleString("en-US")}`;
+const MIN_TRACKED_FOR_VOLUME = 3; // volume of one or two tracked cards is an anecdote, not a segment
+const MIN_SALES_FOR_VOLUME = 5;
+
+/** A few factual sentences about the segments; every claim maps to a number in the table below it. */
+export function marketRecap(segments: RecapSegment[], noun: string, day: string): string[] {
+  if (segments.length === 0) return [];
+  const lines: string[] = [];
+  const totalCards = segments.reduce((a, s) => a + s.cards, 0);
+  const totalValue = segments.reduce((a, s) => a + s.valueCents, 0);
+  lines.push(`${totalCards.toLocaleString("en-US")} cards priced at $3 or more are worth ${usd(totalValue)} in total across ${segments.length} ${noun}s (snapshot ${day}).`);
+
+  const top = [...segments].sort((a, b) => b.valueCents - a.valueCents)[0];
+  lines.push(`${top.key} holds the most value: ${usd(top.valueCents)}, ${Math.round((top.valueCents / totalValue) * 100)}% of the total.`);
+
+  const withChange = segments.filter((s) => s.changePct !== null && s.headline);
+  const best = [...withChange].sort((a, b) => b.changePct! - a.changePct!)[0];
+  const worst = [...withChange].sort((a, b) => a.changePct! - b.changePct!)[0];
+  if (best && best.changePct! > 0) lines.push(best.headline!);
+  if (worst && worst.changePct! < 0 && worst !== best) lines.push(worst.headline!);
+
+  const active = segments
+    .filter((s) => s.volume && s.volume.trackedCards >= MIN_TRACKED_FOR_VOLUME && s.volume.sales7 >= MIN_SALES_FOR_VOLUME)
+    .sort((a, b) => b.volume!.sales7 - a.volume!.sales7)[0];
+  if (active) {
+    const v = active.volume!;
+    const vs = v.salesPrev7 >= MIN_SALES_FOR_VOLUME ? ` (${v.sales7 >= v.salesPrev7 ? "+" : "-"}${Math.abs(((v.sales7 - v.salesPrev7) / v.salesPrev7) * 100).toFixed(0)}% vs the prior 7 days)` : "";
+    lines.push(`Most sold-listing activity among tracked cards: ${active.key}, ${v.sales7} sales in the last 7 days across its ${v.trackedCards} tracked cards${vs}.`);
+  }
+  return lines;
+}

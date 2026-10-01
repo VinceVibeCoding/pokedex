@@ -6,7 +6,8 @@
 
 import { Prisma } from "../generated/prisma/client";
 import { getPrisma } from "../lib/prisma";
-import { ERAS, MIN_SCREEN_PRICE_CENTS, segmentHeadline, type SegmentStats } from "../analysis/trends";
+import { ERAS, eraOf, MIN_SCREEN_PRICE_CENTS, segmentHeadline, type SegmentStats } from "../analysis/trends";
+import { dataAnchor, getBestSourceSales, windowOf } from "./trackedSales";
 import { freshCutoff, latestSnapshotDay, thenPrices } from "./snapshotSql";
 
 export type SegmentBy = "set" | "era" | "rarity";
@@ -19,6 +20,8 @@ export interface Segment {
   window: SegmentStats["window"] | null;
   pctUp: number | null;
   headline: string | null;
+  valueShare: number; // this segment's share of the total value across all segments (0–1)
+  volume: { trackedCards: number; sales7: number; salesPrev7: number } | null; // sold listings, tracked cards only
 }
 
 const MIN_CARDS = 10; // a segment of 3 cards says nothing
@@ -31,6 +34,28 @@ function keyExpr(by: SegmentBy): Prisma.Sql {
   if (by === "rarity") return Prisma.sql`c.rarity`;
   const whens = [...ERAS].reverse().map((e) => Prisma.sql`WHEN EXTRACT(YEAR FROM c."releaseDate") >= ${e.fromYear} THEN ${e.label}::text`);
   return Prisma.sql`CASE ${Prisma.join(whens, " ")} ELSE ${ERAS[0].label}::text END`;
+}
+
+/** Sold-listing volume per segment: only tracked cards have it, so the tracked-card count is shown with it. */
+async function volumeBySegment(by: SegmentBy): Promise<Map<string, { trackedCards: number; sales7: number; salesPrev7: number }>> {
+  const sales = await getBestSourceSales(16);
+  if (sales.size === 0) return new Map();
+  const anchor = dataAnchor(sales);
+  const cards = await getPrisma().card.findMany({
+    where: { id: { in: [...sales.keys()] } },
+    select: { id: true, setName: true, rarity: true, releaseDate: true },
+  });
+  const out = new Map<string, { trackedCards: number; sales7: number; salesPrev7: number }>();
+  for (const c of cards) {
+    const key = by === "set" ? c.setName : by === "rarity" ? c.rarity : eraOf(c.releaseDate.getUTCFullYear());
+    const list = sales.get(c.id)!;
+    const cur = out.get(key) ?? { trackedCards: 0, sales7: 0, salesPrev7: 0 };
+    cur.trackedCards += 1;
+    cur.sales7 += windowOf(list, 7, 0, anchor).n;
+    cur.salesPrev7 += windowOf(list, 14, 7, anchor).n;
+    out.set(key, cur);
+  }
+  return out;
 }
 
 export async function getMarketSegments(by: SegmentBy): Promise<{ day: string; segments: Segment[] } | null> {
@@ -69,6 +94,8 @@ export async function getMarketSegments(by: SegmentBy): Promise<{ day: string; s
     HAVING count(*) >= ${MIN_CARDS}
   `;
 
+  const volume = await volumeBySegment(by);
+  const totalValue = rows.reduce((a, r) => a + r.value, 0);
   const segments: Segment[] = rows.map((r) => {
     let changePct: number | null = null;
     let window: Segment["window"] = null;
@@ -80,7 +107,7 @@ export async function getMarketSegments(by: SegmentBy): Promise<{ day: string; s
     } else if (r.cm_n >= MIN_LIKE_FOR_LIKE && r.cm_median !== null) {
       changePct = r.cm_median * 100; window = "cm"; pctUp = (r.cm_up / r.cm_n) * 100;
     }
-    const seg: Segment = { key: r.key, cards: r.cards, valueCents: r.value, changePct, window, pctUp, headline: null };
+    const seg: Segment = { key: r.key, cards: r.cards, valueCents: r.value, changePct, window, pctUp, headline: null, valueShare: totalValue > 0 ? r.value / totalValue : 0, volume: volume.get(r.key) ?? null };
     seg.headline = window ? segmentHeadline({ label: r.key, cards: r.cards, changePct, pctUp, window }) : null;
     return seg;
   });

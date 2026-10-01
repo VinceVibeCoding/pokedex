@@ -7,6 +7,7 @@
 import { getPrisma } from "../lib/prisma";
 import { computeTrendSignals, eraOf, MIN_SCREEN_PRICE_CENTS, type SoldWindows, type Tag, type TrendSignals } from "../analysis/trends";
 import { freshCutoff, latestSnapshotDay, thenPrices } from "./snapshotSql";
+import { dataAnchor, getBestSourceSales, windowOf } from "./trackedSales";
 
 export const SCREENER_PAGE_SIZE = 25;
 const CACHE_MS = 10 * 60_000;
@@ -67,33 +68,13 @@ async function buildUniverse(): Promise<Universe | null> {
     WHERE s.date = ${day}::date AND s."tcgMarketCents" >= ${MIN_SCREEN_PRICE_CENTS}
   `;
 
-  // Sold-listing data exists only for tracked cards: raw-tier daily sales over the last 30 days. Per card
-  // we use ONE source (the one with the most sales) — PokeTrace's eBay and TCGplayer feeds overlap.
-  const DAY = 86_400_000;
-  const sinceSales = new Date(Date.now() - 30 * DAY).toISOString().slice(0, 10);
-  const salesRows = await prisma.$queryRaw<Array<{ cardId: string; source: string; date: Date; price: number; n: number }>>`
-    SELECT "cardId", source::text AS source, date, "avgPriceCents" AS price, "saleCount" AS n FROM daily_prices
-    WHERE "gradeTier" = 'raw' AND "saleCount" > 0 AND date >= ${sinceSales}::date
-  `;
-  const bySource = new Map<string, typeof salesRows>();
-  for (const r of salesRows) bySource.set(`${r.cardId}|${r.source}`, [...(bySource.get(`${r.cardId}|${r.source}`) ?? []), r]);
-  const bestRows = new Map<string, typeof salesRows>();
-  for (const [key, list] of bySource) {
-    const cardId = key.split("|")[0];
-    const total = list.reduce((a, r) => a + r.n, 0);
-    const cur = bestRows.get(cardId);
-    if (!cur || total > cur.reduce((a, r) => a + r.n, 0)) bestRows.set(cardId, list);
-  }
-  const windowOf = (list: typeof salesRows, days: number) => {
-    const from = Date.now() - days * DAY;
-    const inWin = list.filter((r) => r.date.getTime() >= from);
-    const n = inWin.reduce((a, r) => a + r.n, 0);
-    return { n, avg: n > 0 ? inWin.reduce((a, r) => a + r.price * r.n, 0) / n : null };
-  };
+  // Sold-listing data exists only for tracked cards (see trackedSales.ts).
+  const sales = await getBestSourceSales(31);
+  const anchor = dataAnchor(sales);
   const soldByCard = new Map<string, SoldWindows>();
   const perWeek = new Map<string, number>();
-  for (const [cardId, list] of bestRows) {
-    const w3 = windowOf(list, 3), w7 = windowOf(list, 7), w30 = windowOf(list, 30);
+  for (const [cardId, list] of sales) {
+    const w3 = windowOf(list, 3, 0, anchor), w7 = windowOf(list, 7, 0, anchor), w30 = windowOf(list, 30, 0, anchor);
     soldByCard.set(cardId, { avg3: w3.avg, avg7: w7.avg, avg30: w30.avg, sales3: w3.n, sales7: w7.n, sales30: w30.n });
     perWeek.set(cardId, (w30.n / 30) * 7);
   }

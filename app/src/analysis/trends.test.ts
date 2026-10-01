@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeTrendSignals, eraOf, pctChange, segmentHeadline } from "./trends";
+import { computeTrendSignals, eraOf, marketRecap, pctChange, segmentHeadline, type RecapSegment } from "./trends";
 
 const base = { priceCents: 5000, own7dCents: null, own30dCents: null, cm: null, sold: null, salesPerWeek: null };
 
@@ -74,5 +74,35 @@ describe("eraOf / segmentHeadline", () => {
   it("writes a plain-language headline, and nothing when there is no change data", () => {
     expect(segmentHeadline({ label: "Jungle", cards: 60, changePct: 8.24, pctUp: 62.4, window: "30d" })).toBe("Jungle up 8.2% over 30 days across 60 cards, 62% of cards rising");
     expect(segmentHeadline({ label: "Jungle", cards: 60, changePct: null, pctUp: null, window: "30d" })).toBeNull();
+  });
+});
+
+describe("marketRecap", () => {
+  const seg = (o: Partial<RecapSegment> & { key: string }): RecapSegment => ({ cards: 100, valueCents: 100000, changePct: null, headline: null, volume: null, ...o });
+  it("states totals and the largest segment, and stays silent with no data", () => {
+    expect(marketRecap([], "era", "2026-10-01")).toEqual([]);
+    const lines = marketRecap([seg({ key: "Jungle", valueCents: 300000 }), seg({ key: "Fossil", valueCents: 100000 })], "set", "2026-10-01");
+    expect(lines[0]).toBe("200 cards priced at $3 or more are worth $4,000 in total across 2 sets (snapshot 2026-10-01).");
+    expect(lines[1]).toBe("Jungle holds the most value: $3,000, 75% of the total.");
+    expect(lines).toHaveLength(2);
+  });
+  it("abbreviates millions only from $1M up", () => {
+    expect(marketRecap([seg({ key: "A", valueCents: 150_000_00 })], "set", "d")[0]).toContain("$150,000 in total");
+    expect(marketRecap([seg({ key: "A", valueCents: 120_000_000 })], "set", "d")[0]).toContain("$1.2M in total");
+  });
+  it("adds the leader and laggard headlines only when they really rose or fell", () => {
+    const lines = marketRecap(
+      [seg({ key: "A", changePct: 8, headline: "A up 8.0%" }), seg({ key: "B", changePct: -5, headline: "B down 5.0%" }), seg({ key: "C", changePct: 1, headline: "C up 1.0%" })],
+      "set", "d",
+    );
+    expect(lines).toContain("A up 8.0%");
+    expect(lines).toContain("B down 5.0%");
+    expect(marketRecap([seg({ key: "A", changePct: 3, headline: "A up 3.0%" }), seg({ key: "B", changePct: 2, headline: "B up 2.0%" })], "set", "d").filter((l) => l.includes("down"))).toEqual([]);
+  });
+  it("reports sold-listing activity only for segments with enough tracked cards and sales", () => {
+    const thin = marketRecap([seg({ key: "X", volume: { trackedCards: 1, sales7: 40, salesPrev7: 10 } })], "set", "d");
+    expect(thin.join(" ")).not.toMatch(/sold-listing/);
+    const ok = marketRecap([seg({ key: "Jungle", volume: { trackedCards: 20, sales7: 30, salesPrev7: 20 } })], "set", "d");
+    expect(ok.at(-1)).toBe("Most sold-listing activity among tracked cards: Jungle, 30 sales in the last 7 days across its 20 tracked cards (+50% vs the prior 7 days).");
   });
 });

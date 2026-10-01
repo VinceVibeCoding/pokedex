@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { formatCents, formatPct } from "@/lib/format";
+import { marketRecap } from "@/analysis/trends";
 import { getMarketSegments, type Segment, type SegmentBy } from "@/serving/markets";
 
 export const metadata: Metadata = { title: "Markets" };
@@ -20,7 +21,9 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
   const withChange = (data?.segments ?? []).filter((s) => s.changePct !== null);
   const rising = [...withChange].sort((a, b) => b.changePct! - a.changePct!).slice(0, 3).filter((s) => s.changePct! > 0);
   const falling = [...withChange].sort((a, b) => a.changePct! - b.changePct!).slice(0, 3).filter((s) => s.changePct! < 0);
+  const maxShare = Math.max(0.0001, ...(data?.segments ?? []).map((s) => s.valueShare));
   const rows = [...(data?.segments ?? [])].sort((a, b) => (b.changePct ?? -Infinity) - (a.changePct ?? -Infinity));
+  const recap = data ? marketRecap(data.segments, view.noun, data.day) : [];
   const pill = (active: boolean) => `rounded-full border px-3 py-1 text-sm ${active ? "border-accent bg-accent text-accent-ink font-semibold" : "border-line text-ink-2 hover:text-ink"}`;
 
   return (
@@ -45,6 +48,14 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
               <strong className="text-ink">Changes are still building.</strong> We record every card&apos;s price daily; a 7-day change appears once a week of history exists (from about 5 Oct 2026) and a 30-day change after a month. Total values below are live.
             </p>
           )}
+          {recap.length > 0 && (
+            <section className="rounded-xl border border-line bg-surface p-4">
+              <h2 className="mb-2 text-sm font-medium text-ink-2">Market recap</h2>
+              <ul className="flex flex-col gap-1.5 text-sm">
+                {recap.map((line) => <li key={line}>{line}</li>)}
+              </ul>
+            </section>
+          )}
           {(rising.length > 0 || falling.length > 0) && (
             <section className="grid gap-3 md:grid-cols-2">
               <Recap title={`Leading ${view.noun}s`} segments={rising} color="var(--good)" />
@@ -59,8 +70,10 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
                   <th className="p-3 text-left font-normal capitalize">{view.noun}</th>
                   <th className="p-3 text-right font-normal">Cards</th>
                   <th className="p-3 text-right font-normal">Total value</th>
+                  <th className="hidden p-3 text-left font-normal md:table-cell">Share of value</th>
                   <th className="p-3 text-right font-normal">Change</th>
                   <th className="p-3 text-right font-normal">Cards rising</th>
+                  <th className="p-3 text-right font-normal" title="Sold listings in the last 7 days — only for cards we track">Sales 7d*</th>
                 </tr>
               </thead>
               <tbody>
@@ -69,17 +82,37 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
                     <td className="p-3 font-medium">{s.key}</td>
                     <td className="tabular p-3 text-right text-ink-2">{s.cards.toLocaleString()}</td>
                     <td className="tabular p-3 text-right">{formatCents(s.valueCents)}</td>
+                    <td className="hidden p-3 md:table-cell">
+                      <div className="flex items-center gap-2" aria-label={`${(s.valueShare * 100).toFixed(1)}% of total value`}>
+                        <div className="h-2 w-28 overflow-hidden rounded-full bg-surface-2">
+                          <div className="h-full rounded-full bg-accent" style={{ width: `${Math.max(2, (s.valueShare / maxShare) * 100)}%` }} />
+                        </div>
+                        <span className="tabular text-xs text-ink-3">{(s.valueShare * 100).toFixed(1)}%</span>
+                      </div>
+                    </td>
                     <td className="tabular p-3 text-right font-semibold" style={{ color: s.changePct === null ? undefined : s.changePct >= 0 ? "var(--good)" : "var(--critical)" }}>
                       {s.changePct === null ? <span className="font-normal text-ink-3">—</span> : <>{s.changePct >= 0 ? "▲" : "▼"} {formatPct(s.changePct, 1).replace(/^[+-]/, "")} <span className="font-normal text-ink-3">{windowLabel(s)}</span></>}
                     </td>
                     <td className="tabular p-3 text-right text-ink-2">{s.pctUp === null ? "—" : `${Math.round(s.pctUp)}%`}</td>
+                    <td className="tabular p-3 text-right text-ink-2">
+                      {s.volume ? (
+                        <span title={`${s.volume.trackedCards} tracked cards; ${s.volume.salesPrev7} sales in the 7 days before`}>
+                          {s.volume.sales7}
+                          {s.volume.salesPrev7 >= 5 && (
+                            <span className="ml-1 text-xs" style={{ color: s.volume.sales7 >= s.volume.salesPrev7 ? "var(--good)" : "var(--critical)" }}>
+                              {s.volume.sales7 >= s.volume.salesPrev7 ? "▲" : "▼"}
+                            </span>
+                          )}
+                        </span>
+                      ) : "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <p className="text-xs text-ink-3">
-            Snapshot {data.day}. &quot;Total value&quot; = one copy of every card at TCGplayer market price. Change uses our own price history once we have it (30d, else 7d); until then it falls back to Cardmarket&apos;s 7-day vs 30-day average (labeled &quot;CM&quot;). Cards under $3 are excluded.
+            * Sales are counted from sold listings and exist only for cards we track, so a segment with few tracked cards shows few sales. Snapshot {data.day}. &quot;Total value&quot; = one copy of every card at TCGplayer market price. Change uses our own price history once we have it (30d, else 7d); until then it falls back to Cardmarket&apos;s 7-day vs 30-day average (labeled &quot;CM&quot;). Cards under $3 are excluded.
           </p>
         </>
       )}
